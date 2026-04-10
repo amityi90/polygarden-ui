@@ -1,0 +1,92 @@
+{
+  "nav": {
+    "home": "Startseite",
+    "planner": "Feldplaner",
+    "about": "Über uns"
+  },
+  "footer": {
+    "tagline": "Intelligenter anbauen. Sonnenlicht ernten.",
+    "rights": "© 2026 PolyGarden. Alle Rechte vorbehalten."
+  },
+  "wizard": {
+    "step": "Schritt {{current}} von {{total}}",
+    "next": "Weiter",
+    "back": "Zurück",
+    "submit": "Meinen Garten erstellen",
+    "steps": {
+      "1": "Feldgröße",
+      "2": "Pflanzen",
+      "3": "Solaranlage"
+    }
+  },
+  "step1": {
+    "title": "Ihr Feld definieren",
+    "subtitle": "Geben Sie die Abmessungen Ihres Feldes in Metern ein.",
+    "length": "Länge (Ost–West)",
+    "width": "Breite (Nord–Süd)",
+    "length_placeholder": "z.B. 100",
+    "width_placeholder": "z.B. 50",
+    "north_coordinate": "Nordkoordinate (Breitengrad)",
+    "north_coordinate_placeholder": "z.B. 48,5",
+    "unit": "m",
+    "errors": {
+      "required": "Dieses Feld ist erforderlich.",
+      "positive": "Muss eine positive Zahl sein.",
+      "min": "Mindestwert ist {{min}} m."
+    }
+  },
+  "step2": {
+    "title": "Pflanzen auswählen",
+    "subtitle": "Wählen Sie die Pflanzen, die Sie anbauen möchten. Begleitpflanzen werden automatisch gruppiert.",
+    "search": "Pflanzen suchen…",
+    "selected": "{{count}} Pflanze ausgewählt",
+    "selected_plural": "{{count}} Pflanzen ausgewählt",
+    "no_results": "Keine Pflanzen gefunden.",
+    "loading": "Pflanzenkatalog wird geladen…",
+    "error": "Pflanzen konnten nicht geladen werden. Läuft der Server?",
+    "water": {
+      "low": "Wenig Wasser",
+      "medium": "Mittlerer Wasserbedarf",
+      "high": "Viel Wasser"
+    },
+    "sun": {
+      "full_sun": "Volle Sonne",
+      "partial_shade": "Halbschatten",
+      "full_shade": "Vollschatten"
+    }
+  },
+  "step3": {
+    "title": "Solarintegration",
+    "subtitle": "Konfigurieren Sie Ihre agrivoltaische Anlage. Der erlaubte Bereich basiert auf Ihrer Feldgröße.",
+    "pv_production": "PV-Leistung (kW)",
+    "battery_size": "Batteriegröße (kWh)",
+    "system_height": "Systemhöhe (m)",
+    "north_coordinate": "Nordkoordinate (°)",
+    "range_hint": "Erlaubter Bereich: {{min}} kW – {{max}} kW",
+    "loading": "Systembereich wird berechnet…",
+    "errors": {
+      "required": "Dieses Feld ist erforderlich.",
+      "positive": "Muss eine positive Zahl sein.",
+      "out_of_range": "Muss zwischen {{min}} und {{max}} liegen."
+    }
+  },
+  "summary": {
+    "title": "Ihr agrivoltaischer Garten",
+    "subtitle": "Fahren Sie über Reihen und Pflanzengruppen, um Ihr Feldlayout zu erkunden.",
+    "loading": "Ihr Gartenlayout wird erstellt…",
+    "error": "Layout konnte nicht erstellt werden. Bitte gehen Sie zurück und versuchen Sie es erneut.",
+    "tooltip": {
+      "plant_row": "Pflanzenreihe {{index}}",
+      "pv_row": "Solarreihe {{index}} · {{kw}} kW",
+      "gap": "Traktorweg"
+    },
+    "legend": {
+      "plant_row": "Pflanzenreihe",
+      "pv_row": "Solarreihe",
+      "gap": "Traktorlücke"
+    },
+    "download_pdf": "PDF herunterladen",
+    "pdf_loading": "PDF wird erstellt…",
+    "start_over": "Neuen Garten planen"
+  }
+}

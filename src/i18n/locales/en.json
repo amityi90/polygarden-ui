@@ -1,0 +1,92 @@
+{
+  "nav": {
+    "home": "Home",
+    "planner": "Field Planner",
+    "about": "About"
+  },
+  "footer": {
+    "tagline": "Grow smarter. Harvest sunlight.",
+    "rights": "© 2026 PolyGarden. All rights reserved."
+  },
+  "wizard": {
+    "step": "Step {{current}} of {{total}}",
+    "next": "Next",
+    "back": "Back",
+    "submit": "Generate My Garden",
+    "steps": {
+      "1": "Field Size",
+      "2": "Plants",
+      "3": "Solar System"
+    }
+  },
+  "step1": {
+    "title": "Define Your Field",
+    "subtitle": "Enter the dimensions of your field in meters.",
+    "length": "Length (East–West)",
+    "width": "Width (North–South)",
+    "length_placeholder": "e.g. 100",
+    "width_placeholder": "e.g. 50",
+    "north_coordinate": "North Coordinate (latitude)",
+    "north_coordinate_placeholder": "e.g. 48.5",
+    "unit": "m",
+    "errors": {
+      "required": "This field is required.",
+      "positive": "Must be a positive number.",
+      "min": "Minimum value is {{min}} m."
+    }
+  },
+  "step2": {
+    "title": "Choose Your Plants",
+    "subtitle": "Select the plants you want to grow. Companion plants are grouped together automatically.",
+    "search": "Search plants…",
+    "selected": "{{count}} plant selected",
+    "selected_plural": "{{count}} plants selected",
+    "no_results": "No plants match your search.",
+    "loading": "Loading plant catalog…",
+    "error": "Could not load plants. Is the server running?",
+    "water": {
+      "low": "Low water",
+      "medium": "Medium water",
+      "high": "High water"
+    },
+    "sun": {
+      "full_sun": "Full sun",
+      "partial_shade": "Partial shade",
+      "full_shade": "Full shade"
+    }
+  },
+  "step3": {
+    "title": "Solar Integration",
+    "subtitle": "Configure your agrivoltaic system. The allowed range is based on your field size.",
+    "pv_production": "PV Production (kW)",
+    "battery_size": "Battery Size (kWh)",
+    "system_height": "System Height (m)",
+    "north_coordinate": "North Coordinate (°)",
+    "range_hint": "Allowed range: {{min}} kW – {{max}} kW",
+    "loading": "Calculating system range…",
+    "errors": {
+      "required": "This field is required.",
+      "positive": "Must be a positive number.",
+      "out_of_range": "Must be between {{min}} and {{max}}."
+    }
+  },
+  "summary": {
+    "title": "Your Agrivoltaic Garden",
+    "subtitle": "Hover over rows and plant groups to explore your field layout.",
+    "loading": "Generating your garden layout…",
+    "error": "Could not generate layout. Please go back and try again.",
+    "tooltip": {
+      "plant_row": "Plant Row {{index}}",
+      "pv_row": "Solar Row {{index}} · {{kw}} kW",
+      "gap": "Tractor Path"
+    },
+    "legend": {
+      "plant_row": "Plant Row",
+      "pv_row": "Solar Row",
+      "gap": "Tractor Gap"
+    },
+    "download_pdf": "Download PDF",
+    "pdf_loading": "Generating PDF…",
+    "start_over": "Plan Another Garden"
+  }
+}

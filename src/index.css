@@ -1,0 +1,102 @@
+@import "tailwindcss";
+
+@theme {
+  /* Colors */
+  --color-bg-base: #0a0a0a;
+  --color-bg-surface: #111111;
+  --color-bg-elevated: #1a1a1a;
+  --color-bg-overlay: #222222;
+
+  --color-gold: #c9a84c;
+  --color-gold-light: #e0c068;
+  --color-gold-dim: rgba(201, 168, 76, 0.15);
+  --color-gold-border: rgba(201, 168, 76, 0.3);
+
+  --color-green: #3a6b4a;
+  --color-green-light: #4e8f63;
+  --color-green-dim: rgba(58, 107, 74, 0.2);
+
+  --color-text-primary: #f0ece3;
+  --color-text-secondary: #9a9080;
+  --color-text-muted: #5a5248;
+
+  --color-border: rgba(255, 255, 255, 0.08);
+  --color-border-hover: rgba(201, 168, 76, 0.4);
+
+  /* Typography */
+  --font-heading: "Cormorant Garant", Georgia, serif;
+  --font-body: "Inter", system-ui, sans-serif;
+
+  /* Radius */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background-color: #0a0a0a;
+  color: #f0ece3;
+  font-family: "Inter", system-ui, sans-serif;
+  font-size: 16px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#root {
+  min-height: 100svh;
+  display: flex;
+  flex-direction: column;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  font-family: "Cormorant Garant", Georgia, serif;
+  font-weight: 500;
+  line-height: 1.2;
+  margin: 0;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #111111;
+}
+::-webkit-scrollbar-thumb {
+  background: #333;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #c9a84c;
+}
+
+/* Gold shimmer animation for accents */
+@keyframes shimmer {
+  0% { opacity: 0.6; }
+  50% { opacity: 1; }
+  100% { opacity: 0.6; }
+}
+
+/* Radial pop — used by PlantCard hover bubbles */
+@keyframes radialPop {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.3);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
