@@ -1,13 +1,6 @@
 /**
  * FieldCanvas — renders the GeoJSON garden layout on a plain HTML5 canvas.
  *
- * Why plain canvas (not react-konva)?
- * ─────────────────────────────────────
- * With hundreds of shapes, react-konva creates one JS object per shape,
- * each with event listeners — this stalls the browser. A plain <canvas>
- * draws everything in a single 2D draw call with no per-shape objects.
- * We do our own hit-testing on mousemove instead of relying on Konva events.
- *
  * Coordinate system:
  * ──────────────────
  * GeoPandas outputs coordinates in field-space meters (0,0 = SW corner).
@@ -18,39 +11,43 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FeatureCollection, Polygon } from 'geojson'
 import { useTranslation } from 'react-i18next'
+import { speciesColor } from './speciesColor'
 
 interface FieldCanvasProps {
-  layout: FeatureCollection
-  canvasWidth: number
-  canvasHeight: number
+  layout:        FeatureCollection
+  canvasWidth:   number
+  canvasHeight:  number
+  hiddenSpecies?: ReadonlySet<string>
 }
 
 // ─── Feature property types ───────────────────────────────────────────────────
 
-interface PlantRowProps { type: 'plant_row'; row_index: number; plants: string[] }
-interface TreeProps     { type: 'tree';      center_x: number; center_y: number; radius_m: number; name?: string }
-interface PVRowProps    { type: 'pv_row';    row_index: number; kw: number }
-interface GapProps      { type: 'gap' }
-interface ShadowProps   { type: 'shadow' }
+interface PlantRowProps     { type: 'plant_row';      row_index: number }
+interface PlantInstanceProps{ type: 'plant_instance'; plant_id?: number; plant_name: string; spread_m: number; radius_m: number }
+interface TreeProps         { type: 'tree';           name: string; spread_m: number; height_m?: number }
+interface PVRowProps        { type: 'pv_row';         row_index: number; kw: number }
+interface GapProps          { type: 'gap' }
+interface ShadowProps       { type: 'shadow';         row_index?: number; shadow_length_m?: number }
 
-type FeatureProps = PlantRowProps | TreeProps | PVRowProps | GapProps | ShadowProps
+type RawProps = PlantRowProps | PlantInstanceProps | TreeProps | PVRowProps | GapProps | ShadowProps
 
-// ─── Internal draw item (precomputed canvas coords) ───────────────────────────
+// ─── Internal draw items ──────────────────────────────────────────────────────
 
 interface RectItem {
   kind: 'rect'
-  props: FeatureProps
+  props: RawProps
   x: number; y: number; w: number; h: number
   baseColor: string; hoverColor: string
   opacity: number
   strokeColor: string | null
-  label: string | null   // PV row kW label
+  label: string | null
 }
 
 interface CircleItem {
   kind: 'circle'
-  props: FeatureProps
+  props: RawProps
   cx: number; cy: number; r: number
+  geoX: number; geoY: number
   baseColor: string; hoverColor: string
 }
 
@@ -59,157 +56,277 @@ type DrawItem = RectItem | CircleItem
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const PADDING = 32
-const COLORS = {
-  plant_row:       '#3a6b4a',
-  plant_row_hover: '#4e8f63',
-  pv_row:          '#c9a84c',
-  pv_row_hover:    '#e0c068',
-  gap:             '#2a1f0e',
-  gap_hover:       '#3d2e14',
-  shadow:          '#888888',
-  shadow_hover:    '#aaaaaa',
+
+const STRUCT = {
+  plant_row: { base: '#1e3a28', hover: '#2a5038' },
+  pv_row:    { base: '#c9a84c', hover: '#e0c068' },
+  gap:       { base: '#2a1f0e', hover: '#3d2e14' },
+  shadow:    { base: '#888888', hover: '#aaaaaa' },
 }
 
-const TREE_PALETTE: { base: string; hover: string }[] = [
-  { base: '#2a6b9b', hover: '#3d90cc' },
-  { base: '#8b4513', hover: '#b05a1a' },
-  { base: '#6a0dad', hover: '#8b1fd6' },
-  { base: '#9b6a00', hover: '#c98900' },
-  { base: '#005f5f', hover: '#007a7a' },
-  { base: '#7a1f3d', hover: '#a02850' },
-  { base: '#3d6b00', hover: '#52900a' },
-  { base: '#5a3a7a', hover: '#7a50a0' },
-]
+// ─── Geometry helpers ─────────────────────────────────────────────────────────
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function computeBBox(fc: FeatureCollection) {
+function polyBBox(coords: number[][]) {
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
-  for (const f of fc.features) {
-    if (f.geometry.type !== 'Polygon') continue
-    for (const ring of (f.geometry as Polygon).coordinates) {
-      for (const [x, y] of ring) {
-        if (x < minX) minX = x; if (y < minY) minY = y
-        if (x > maxX) maxX = x; if (y > maxY) maxY = y
-      }
-    }
+  for (const [x, y] of coords) {
+    if (x < minX) minX = x; if (y < minY) minY = y
+    if (x > maxX) maxX = x; if (y > maxY) maxY = y
   }
   return { minX, minY, maxX, maxY }
 }
 
-function buildTreeColorMap(features: FeatureCollection['features']): Map<string, { base: string; hover: string }> {
-  const names = [...new Set(
-    features
-      .filter(f => (f.properties as FeatureProps).type === 'tree')
-      .map(f => (f.properties as TreeProps).name ?? 'Unknown'),
-  )]
-  return new Map(names.map((name, i) => [name, TREE_PALETTE[i % TREE_PALETTE.length]]))
+function polyCentroid(coords: number[][]): [number, number] {
+  let sx = 0, sy = 0
+  for (const [x, y] of coords) { sx += x; sy += y }
+  return [sx / coords.length, sy / coords.length]
 }
 
-function tooltipLines(props: FeatureProps, t: (k: string, o?: Record<string, unknown>) => string): string[] {
-  if (props.type === 'plant_row')
-    return [t('summary.tooltip.plant_row', { index: props.row_index + 1 }), ...(props.plants ?? []).map(p => `  · ${p}`)]
-  if (props.type === 'tree')
-    return [props.name ? `Tree: ${props.name}` : 'Tree']
-  if (props.type === 'pv_row')
-    return [t('summary.tooltip.pv_row', { index: props.row_index + 1, kw: props.kw })]
-  if (props.type === 'shadow')
-    return ['Shadow zone']
-  return [t('summary.tooltip.gap')]
+// Bounding box from Polygon features only (structural elements define field extent)
+function computeBBox(fc: FeatureCollection) {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+  for (const f of fc.features) {
+    if (f.geometry.type !== 'Polygon') continue
+    for (const ring of (f.geometry as Polygon).coordinates)
+      for (const [x, y] of ring) {
+        if (x < minX) minX = x; if (y < minY) minY = y
+        if (x > maxX) maxX = x; if (y > maxY) maxY = y
+      }
+  }
+  return { minX, minY, maxX, maxY }
+}
+
+// ─── Tooltip ──────────────────────────────────────────────────────────────────
+
+function tooltipLines(item: DrawItem, t: (k: string, o?: Record<string, unknown>) => string): string[] {
+  const p = item.props
+  const geo = item.kind === 'circle'
+    ? `X: ${item.geoX.toFixed(2)} m  Y: ${item.geoY.toFixed(2)} m`
+    : null
+
+  switch (p.type) {
+    case 'plant_instance': {
+      const lines = [p.plant_name, `Spread: ${p.spread_m} m`]
+      if (geo) lines.push(geo)
+      return lines
+    }
+    case 'tree': {
+      const lines = [`🌳 ${p.name}`, `Spread: ${p.spread_m} m`]
+      if (p.height_m != null) lines.push(`Height: ${p.height_m} m`)
+      if (geo) lines.push(geo)
+      return lines
+    }
+    case 'pv_row':
+      return [t('summary.tooltip.pv_row', { index: p.row_index + 1, kw: p.kw })]
+    case 'shadow':
+      return p.shadow_length_m != null
+        ? [`Shadow zone`, `Length: ${p.shadow_length_m.toFixed(1)} m`]
+        : [`Shadow zone`]
+    case 'gap':
+      return [t('summary.tooltip.gap')]
+    default:
+      return [t('summary.tooltip.plant_row', { index: (p as PlantRowProps).row_index + 1 })]
+  }
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export function FieldCanvas({ layout, canvasWidth, canvasHeight }: FieldCanvasProps) {
+export function FieldCanvas({ layout, canvasWidth, canvasHeight, hiddenSpecies }: FieldCanvasProps) {
   const { t } = useTranslation()
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null)
-  const [mousePos, setMousePos] = useState<{ x: number; y: number } | null>(null)
+  const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
+  const [mousePos,   setMousePos]   = useState<{ x: number; y: number } | null>(null)
 
-  // Precompute transform parameters
+  // ── Zoom / pan ────────────────────────────────────────────────────────────
+  const [zoom, setZoom] = useState(1)
+  const [panX, setPanX] = useState(0)
+  const [panY, setPanY] = useState(0)
+  const transformRef = useRef({ zoom: 1, panX: 0, panY: 0 })
+  transformRef.current = { zoom, panX, panY }
+  const dragRef = useRef<{ startX: number; startY: number; startPanX: number; startPanY: number } | null>(null)
+  const [isDragging, setIsDragging] = useState(false)
+
+  // ── Scale from Polygon bbox (structural features define the field extent) ─
   const { minX, minY, maxX, maxY } = useMemo(() => computeBBox(layout), [layout])
   const scale = useMemo(() => {
-    const fieldW = maxX - minX || 1
-    const fieldH = maxY - minY || 1
+    const fw = maxX - minX || 1
+    const fh = maxY - minY || 1
     return Math.min(
-      (canvasWidth  - PADDING * 2) / fieldW,
-      (canvasHeight - PADDING * 2) / fieldH,
+      (canvasWidth  - PADDING * 2) / fw,
+      (canvasHeight - PADDING * 2) / fh,
     )
   }, [minX, minY, maxX, maxY, canvasWidth, canvasHeight])
 
-  const toCanvas = (geoX: number, geoY: number): [number, number] => [
-    (geoX - minX) * scale + PADDING,
-    canvasHeight - ((geoY - minY) * scale + PADDING),
+  // Centre the rendered field in the canvas regardless of aspect-ratio mismatch
+  const offX = (canvasWidth  - (maxX - minX) * scale) / 2
+  const offY = (canvasHeight - (maxY - minY) * scale) / 2
+
+  const toCanvas = (gx: number, gy: number): [number, number] => [
+    (gx - minX) * scale + offX,
+    canvasHeight - ((gy - minY) * scale + offY),
   ]
 
-  // Precompute draw items once per layout + canvas size
-  const { items, treeColorMap } = useMemo(() => {
-    const treeColorMap = buildTreeColorMap(layout.features)
-    const items: DrawItem[] = []
+  // ── Non-passive wheel handler ─────────────────────────────────────────────
+  useEffect(() => {
+    const el = canvasRef.current
+    if (!el) return
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey) return
+      e.preventDefault()
+      const { zoom, panX, panY } = transformRef.current
+      const rect = el.getBoundingClientRect()
+      const mx = e.clientX - rect.left
+      const my = e.clientY - rect.top
+      const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12
+      const nz = Math.max(0.5, Math.min(12, zoom * factor))
+      const ratio = nz / zoom
+      setZoom(nz)
+      setPanX(mx + (panX - mx) * ratio)
+      setPanY(my + (panY - my) * ratio)
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+  }, [])
+
+  // ── Build draw items ──────────────────────────────────────────────────────
+  const items = useMemo(() => {
+    const rects:   RectItem[]   = []
+    const circles: CircleItem[] = []
 
     for (const feature of layout.features) {
-      if (feature.geometry.type !== 'Polygon') continue
-      const props = feature.properties as FeatureProps
+      const props = feature.properties as RawProps
 
-      if (props.type === 'tree') {
-        const [cx, cy] = toCanvas(props.center_x, props.center_y)
-        const r = props.radius_m * scale
-        const colors = treeColorMap.get(props.name ?? 'Unknown') ?? TREE_PALETTE[0]
-        items.push({ kind: 'circle', props, cx, cy, r, baseColor: colors.base, hoverColor: colors.hover })
+      // ── MultiPoint → plant circles (current API) ────────────────────────
+      if (feature.geometry.type === 'MultiPoint') {
+        if (props.type !== 'plant_instance') continue
+        if (hiddenSpecies?.has(props.plant_name)) continue
+        const r = ((props as PlantInstanceProps).spread_m / 2) * scale
+        const { base, hover } = speciesColor(props.plant_name)
+        for (const [gx, gy] of (feature.geometry as import('geojson').MultiPoint).coordinates) {
+          const [cx, cy] = toCanvas(gx, gy)
+          circles.push({ kind: 'circle', props, cx, cy, r, geoX: gx, geoY: gy, baseColor: base, hoverColor: hover })
+        }
         continue
       }
 
-      // Rect-based features: derive bbox from polygon coords
-      const coords = (feature.geometry as Polygon).coordinates[0]
-      if (coords.length < 4) continue
-      let gMinX = Infinity, gMinY = Infinity, gMaxX = -Infinity, gMaxY = -Infinity
-      for (const [x, y] of coords) {
-        if (x < gMinX) gMinX = x; if (y < gMinY) gMinY = y
-        if (x > gMaxX) gMaxX = x; if (y > gMaxY) gMaxY = y
+      // ── Point → plant circle (legacy) ───────────────────────────────────
+      if (feature.geometry.type === 'Point') {
+        if (props.type !== 'plant_instance') continue
+        if (hiddenSpecies?.has(props.plant_name)) continue
+        const [gx, gy] = (feature.geometry as import('geojson').Point).coordinates
+        const r = ((props as PlantInstanceProps).spread_m / 2) * scale
+        const { base, hover } = speciesColor(props.plant_name)
+        const [cx, cy] = toCanvas(gx, gy)
+        circles.push({ kind: 'circle', props, cx, cy, r, geoX: gx, geoY: gy, baseColor: base, hoverColor: hover })
+        continue
       }
-      const [x1, y1] = toCanvas(gMinX, gMaxY)
-      const [x2, y2] = toCanvas(gMaxX, gMinY)
+
+      if (feature.geometry.type !== 'Polygon') continue
+      const coords = (feature.geometry as Polygon).coordinates[0]
+
+      // ── Polygon plant_instance (legacy) ─────────────────────────────────
+      if (props.type === 'plant_instance') {
+        if (hiddenSpecies?.has(props.plant_name)) continue
+        const [gx, gy] = polyCentroid(coords)
+        const { minX: bx0, maxX: bx1 } = polyBBox(coords)
+        const r = ((bx1 - bx0) / 2) * scale
+        const { base, hover } = speciesColor(props.plant_name)
+        const [cx, cy] = toCanvas(gx, gy)
+        circles.push({ kind: 'circle', props, cx, cy, r, geoX: gx, geoY: gy, baseColor: base, hoverColor: hover })
+        continue
+      }
+
+      // ── Tree circle ──────────────────────────────────────────────────────
+      if (props.type === 'tree') {
+        if (hiddenSpecies?.has(props.name)) continue
+        const [gx, gy] = polyCentroid(coords)
+        const { minX: bx0, maxX: bx1 } = polyBBox(coords)
+        const r = ((bx1 - bx0) / 2) * scale
+        const { base, hover } = speciesColor(props.name)
+        const [cx, cy] = toCanvas(gx, gy)
+        circles.push({ kind: 'circle', props, cx, cy, r, geoX: gx, geoY: gy, baseColor: base, hoverColor: hover })
+        continue
+      }
+
+      // ── Rectangle features ───────────────────────────────────────────────
+      const { minX: gx0, minY: gy0, maxX: gx1, maxY: gy1 } = polyBBox(coords)
+      const [x1, y1] = toCanvas(gx0, gy1)  // top-left (north edge has high Y)
+      const [x2, y2] = toCanvas(gx1, gy0)  // bottom-right
       const w = x2 - x1, h = y2 - y1
       if (w <= 0 || h <= 0) continue
 
-      const baseColor  = props.type === 'pv_row' ? COLORS.pv_row  : props.type === 'gap' ? COLORS.gap  : props.type === 'shadow' ? COLORS.shadow  : COLORS.plant_row
-      const hoverColor = props.type === 'pv_row' ? COLORS.pv_row_hover : props.type === 'gap' ? COLORS.gap_hover : props.type === 'shadow' ? COLORS.shadow_hover : COLORS.plant_row_hover
-      const opacity    = props.type === 'shadow' ? 0.08 : 0.9
-      const strokeColor = props.type === 'gap' ? '#c9a84c22' : props.type === 'shadow' ? null : null
-      const label = props.type === 'pv_row' && w > 40 ? `☀ ${props.kw} kW` : null
-
-      items.push({ kind: 'rect', props, x: x1, y: y1, w, h, baseColor, hoverColor, opacity, strokeColor, label })
+      switch (props.type) {
+        case 'plant_row':
+          rects.push({ kind: 'rect', props, x: x1, y: y1, w, h,
+            baseColor: STRUCT.plant_row.base, hoverColor: STRUCT.plant_row.hover,
+            opacity: 0.6, strokeColor: null, label: null })
+          break
+        case 'pv_row':
+          rects.push({ kind: 'rect', props, x: x1, y: y1, w, h,
+            baseColor: STRUCT.pv_row.base, hoverColor: STRUCT.pv_row.hover,
+            opacity: 0.9, strokeColor: null,
+            label: w > 40 ? `☀ ${props.kw} kW` : null })
+          break
+        case 'gap':
+          rects.push({ kind: 'rect', props, x: x1, y: y1, w, h,
+            baseColor: STRUCT.gap.base, hoverColor: STRUCT.gap.hover,
+            opacity: 0.9, strokeColor: '#c9a84c22', label: null })
+          break
+        case 'shadow':
+          rects.push({ kind: 'rect', props, x: x1, y: y1, w, h,
+            baseColor: STRUCT.shadow.base, hoverColor: STRUCT.shadow.hover,
+            opacity: 0.08, strokeColor: null, label: null })
+          break
+      }
     }
 
-    return { items, treeColorMap }
+    // Draw order: background structure → plants → PV panels (panels occlude plants below them)
+    const pvRects = rects.filter(r => r.props.type === 'pv_row')
+    const bgRects = rects.filter(r => r.props.type !== 'pv_row')
+    return [...bgRects, ...circles, ...pvRects] as DrawItem[]
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [layout, canvasWidth, canvasHeight, scale, minX, minY])
+  }, [layout, canvasWidth, canvasHeight, scale, minX, minY, hiddenSpecies])
 
-  // Draw everything to canvas
+  // ── Draw ──────────────────────────────────────────────────────────────────
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
     const ctx = canvas.getContext('2d')
     if (!ctx) return
 
-    // Background
     ctx.clearRect(0, 0, canvasWidth, canvasHeight)
     ctx.fillStyle = '#0d0d0d'
     ctx.fillRect(0, 0, canvasWidth, canvasHeight)
 
+    ctx.save()
+    ctx.translate(panX, panY)
+    ctx.scale(zoom, zoom)
+
     for (let i = 0; i < items.length; i++) {
-      const item = items[i]
-      const hovered = i === hoveredIndex
-      ctx.globalAlpha = item.kind === 'rect' ? item.opacity : 0.9
+      const item    = items[i]
+      const hovered = i === hoveredIdx
 
       if (item.kind === 'circle') {
-        ctx.beginPath()
-        ctx.arc(item.cx, item.cy, item.r, 0, Math.PI * 2)
-        ctx.fillStyle = hovered ? item.hoverColor : item.baseColor
-        ctx.fill()
+        const isPlant = item.props.type === 'plant_instance'
+
+        if ((isPlant || item.props.type === 'tree') && !hovered) {
+          // All plants and trees: filled circle
+          ctx.beginPath()
+          ctx.arc(item.cx, item.cy, item.r, 0, Math.PI * 2)
+          ctx.globalAlpha = 0.75
+          ctx.fillStyle   = item.baseColor
+          ctx.fill()
+        } else {
+          // Hovered (plant or tree): filled circle highlight
+          ctx.beginPath()
+          ctx.arc(item.cx, item.cy, item.r, 0, Math.PI * 2)
+          ctx.globalAlpha = 0.9
+          ctx.fillStyle   = item.hoverColor
+          ctx.fill()
+        }
 
       } else {
-        ctx.fillStyle = hovered ? item.hoverColor : item.baseColor
+        ctx.globalAlpha = item.opacity
+        ctx.fillStyle   = hovered ? item.hoverColor : item.baseColor
         ctx.beginPath()
         ctx.roundRect(item.x, item.y, item.w, item.h, 2)
         ctx.fill()
@@ -217,51 +334,72 @@ export function FieldCanvas({ layout, canvasWidth, canvasHeight }: FieldCanvasPr
         if (item.strokeColor) {
           ctx.globalAlpha = 1
           ctx.strokeStyle = item.strokeColor
-          ctx.lineWidth = 1
+          ctx.lineWidth   = 1
           ctx.stroke()
         }
 
         if (item.label) {
-          ctx.globalAlpha = 1
-          ctx.fillStyle = '#0a0a0a'
-          ctx.font = '9px Inter, sans-serif'
+          ctx.globalAlpha  = 1
+          ctx.fillStyle    = '#0a0a0a'
+          ctx.font         = '9px Inter, sans-serif'
+          ctx.textAlign    = 'left'
+          ctx.textBaseline = 'alphabetic'
           ctx.fillText(item.label, item.x + 4, item.y + item.h / 2 + 4)
         }
       }
     }
 
-    ctx.globalAlpha = 1
-  }, [items, hoveredIndex, canvasWidth, canvasHeight])
+    ctx.restore()
+    ctx.globalAlpha  = 1
+    ctx.textAlign    = 'left'
+    ctx.textBaseline = 'alphabetic'
+  }, [items, hoveredIdx, canvasWidth, canvasHeight, zoom, panX, panY])
 
-  // Hit-test on mousemove
+  // ── Hit-test ──────────────────────────────────────────────────────────────
+  const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const rect = canvasRef.current!.getBoundingClientRect()
+    dragRef.current = {
+      startX: e.clientX - rect.left, startY: e.clientY - rect.top,
+      startPanX: panX,               startPanY: panY,
+    }
+    setIsDragging(true)
+  }
+
   const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const rect = canvasRef.current!.getBoundingClientRect()
     const mx = e.clientX - rect.left
     const my = e.clientY - rect.top
-    setMousePos({ x: mx, y: my })
 
-    // Search in reverse so top-drawn shapes take priority
+    if (dragRef.current) {
+      setPanX(dragRef.current.startPanX + (mx - dragRef.current.startX))
+      setPanY(dragRef.current.startPanY + (my - dragRef.current.startY))
+      return
+    }
+
+    setMousePos({ x: mx, y: my })
+    const bx = (mx - panX) / zoom
+    const by = (my - panY) / zoom
     for (let i = items.length - 1; i >= 0; i--) {
       const item = items[i]
       if (item.kind === 'circle') {
-        if (Math.hypot(mx - item.cx, my - item.cy) <= item.r) { setHoveredIndex(i); return }
+        if (Math.hypot(bx - item.cx, by - item.cy) <= item.r) { setHoveredIdx(i); return }
       } else {
-        if (mx >= item.x && mx <= item.x + item.w && my >= item.y && my <= item.y + item.h) { setHoveredIndex(i); return }
+        if (bx >= item.x && bx <= item.x + item.w && by >= item.y && by <= item.y + item.h) { setHoveredIdx(i); return }
       }
     }
-    setHoveredIndex(null)
+    setHoveredIdx(null)
   }
 
-  const handleMouseLeave = () => { setHoveredIndex(null); setMousePos(null) }
+  const handleMouseUp    = () => { dragRef.current = null; setIsDragging(false) }
+  const handleMouseLeave = () => { dragRef.current = null; setIsDragging(false); setHoveredIdx(null); setMousePos(null) }
 
-  // Tooltip content
-  const hoveredItem = hoveredIndex !== null ? items[hoveredIndex] : null
-  const lines = hoveredItem ? tooltipLines(hoveredItem.props, t) : []
-
-  const PAD = 10, LINE_H = 16, TW = 180
-  const TH = PAD * 2 + lines.length * LINE_H
-  const tx = mousePos ? Math.min(mousePos.x + 14, canvasWidth - TW - 8) : 0
-  const ty = mousePos ? Math.min(mousePos.y + 14, canvasHeight - TH - 8) : 0
+  // ── Tooltip ───────────────────────────────────────────────────────────────
+  const hoveredItem = hoveredIdx !== null ? items[hoveredIdx] : null
+  const lines = hoveredItem ? tooltipLines(hoveredItem, t) : []
+  const PAD = 10, LINE_H = 16, TW = 200
+  const TH  = PAD * 2 + lines.length * LINE_H
+  const tx  = mousePos ? Math.min(mousePos.x + 14, canvasWidth  - TW - 8) : 0
+  const ty  = mousePos ? Math.min(mousePos.y + 14, canvasHeight - TH - 8) : 0
 
   return (
     <div className="relative select-none">
@@ -269,12 +407,23 @@ export function FieldCanvas({ layout, canvasWidth, canvasHeight }: FieldCanvasPr
         ref={canvasRef}
         width={canvasWidth}
         height={canvasHeight}
+        onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
+        onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseLeave}
-        style={{ display: 'block', cursor: hoveredItem ? 'pointer' : 'default' }}
+        style={{
+          display: 'block',
+          cursor: isDragging ? 'grabbing' : hoveredItem ? 'pointer' : 'grab',
+          touchAction: 'none',
+        }}
       />
 
-      {/* Tooltip overlay */}
+      {zoom !== 1 && (
+        <div className="absolute top-2 right-2 px-2 py-0.5 rounded-md bg-[#1a1a1a]/90 border border-white/10 text-[10px] text-[#9a9080] tabular-nums pointer-events-none">
+          {zoom.toFixed(1)}×
+        </div>
+      )}
+
       {hoveredItem && mousePos && (
         <div
           className="pointer-events-none absolute rounded-lg border border-[#c9a84c]/50 bg-[#1a1a1a]/95 px-3 py-2"
@@ -288,22 +437,15 @@ export function FieldCanvas({ layout, canvasWidth, canvasHeight }: FieldCanvasPr
         </div>
       )}
 
-      {/* Legend */}
-      <div className="flex items-center gap-6 mt-4 flex-wrap">
-        {[
-          { color: COLORS.plant_row, label: t('summary.legend.plant_row'), round: false },
-          { color: COLORS.pv_row,    label: t('summary.legend.pv_row'),    round: false },
-          { color: COLORS.gap,       label: t('summary.legend.gap'),       round: false },
-        ].map(({ color, label, round }) => (
-          <div key={label} className="flex items-center gap-2">
-            <div className={`w-3 h-3 ${round ? 'rounded-full' : 'rounded-sm'}`} style={{ backgroundColor: color }} />
+      <div className="mt-4 flex items-center gap-6 flex-wrap">
+        {([
+          ['plant_row', t('summary.legend.plant_row')],
+          ['pv_row',    t('summary.legend.pv_row')],
+          ['gap',       t('summary.legend.gap')],
+        ] as const).map(([key, label]) => (
+          <div key={key} className="flex items-center gap-2">
+            <div className="w-3 h-3 rounded-sm" style={{ backgroundColor: STRUCT[key].base }} />
             <span className="text-xs text-[#9a9080]">{label}</span>
-          </div>
-        ))}
-        {[...treeColorMap.entries()].map(([name, colors]) => (
-          <div key={name} className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded-full" style={{ backgroundColor: colors.base }} />
-            <span className="text-xs text-[#9a9080]">{name}</span>
           </div>
         ))}
       </div>

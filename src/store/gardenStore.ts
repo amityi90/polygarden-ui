@@ -50,6 +50,10 @@ interface GardenStore {
   gardenLayout: GardenLayout | null
   setGardenLayout: (layout: GardenLayout) => void
 
+  // PDF embedded in the /generate_field_layout response (Base64)
+  pdfBase64: string | null
+  setPdfBase64: (b64: string | null) => void
+
   // Reset everything
   reset: () => void
 }
@@ -62,6 +66,7 @@ const initialState = {
   pvRange: null,
   pvSystem: null,
   gardenLayout: null,
+  pdfBase64: null,
 }
 
 export const useGardenStore = create<GardenStore>()(
@@ -87,6 +92,8 @@ export const useGardenStore = create<GardenStore>()(
       setPVSystem: (pvSystem) => set({ pvSystem }),
 
       setGardenLayout: (gardenLayout) => set({ gardenLayout }),
+
+      setPdfBase64: (pdfBase64) => set({ pdfBase64 }),
 
       reset: () => set(initialState),
     }),

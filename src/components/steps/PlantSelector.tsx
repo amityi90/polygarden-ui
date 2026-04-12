@@ -6,6 +6,20 @@ import { PlantCard } from './PlantCard'
 import { buildBubbles, useRadialHover, RadialRing, DropletIcon, HeightIcon } from './plantRadial'
 import type { Plant } from '../../models/Plant'
 
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+/** Returns true if `month` (1–12) falls within [start, end], handling year-wrap. */
+function monthInRange(month: number, start: number, end: number): boolean {
+  if (end >= start) return month >= start && month <= end
+  return month >= start || month <= end
+}
+
+// ─── Component ────────────────────────────────────────────────────────────────
+
 export function PlantSelector() {
   const { t } = useTranslation()
   const { allPlants, setAllPlants, selectedPlantIds, togglePlant, setStep } = useGardenStore()
@@ -13,6 +27,12 @@ export function PlantSelector() {
   const [search, setSearch] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  // Filters
+  const [filterType,          setFilterType]          = useState<'all' | 'plant' | 'tree'>('all')
+  const [filterLight,         setFilterLight]         = useState<'all' | 'sun' | 'shade'>('all')
+  const [filterHarvestMonths, setFilterHarvestMonths] = useState<Set<number>>(new Set())
+  const [filterPlantMonths,   setFilterPlantMonths]   = useState<Set<number>>(new Set())
 
   useEffect(() => {
     if (allPlants.length > 0) return
@@ -23,13 +43,43 @@ export function PlantSelector() {
       .finally(() => setLoading(false))
   }, [allPlants.length, setAllPlants])
 
+  const toggleHarvestMonth = (m: number) =>
+    setFilterHarvestMonths(prev => { const n = new Set(prev); n.has(m) ? n.delete(m) : n.add(m); return n })
+
+  const togglePlantMonth = (m: number) =>
+    setFilterPlantMonths(prev => { const n = new Set(prev); n.has(m) ? n.delete(m) : n.add(m); return n })
+
+  const hasActiveFilters =
+    filterType !== 'all' || filterLight !== 'all' ||
+    filterHarvestMonths.size > 0 || filterPlantMonths.size > 0
+
+  const clearFilters = () => {
+    setFilterType('all')
+    setFilterLight('all')
+    setFilterHarvestMonths(new Set())
+    setFilterPlantMonths(new Set())
+  }
+
   const available = useMemo(() => {
     const q = search.toLowerCase()
-    return allPlants.filter(
-      (p) => !selectedPlantIds.includes(p.id) &&
-        (q === '' || p.name.toLowerCase().includes(q))
-    )
-  }, [allPlants, search, selectedPlantIds])
+    return allPlants.filter(p => {
+      if (selectedPlantIds.includes(p.id)) return false
+      if (q && !p.name.toLowerCase().includes(q)) return false
+      if (filterType === 'plant' && p.isTree) return false
+      if (filterType === 'tree'  && !p.isTree) return false
+      if (filterLight === 'sun'   && p.shadow) return false
+      if (filterLight === 'shade' && !p.shadow) return false
+      if (filterHarvestMonths.size > 0) {
+        const ok = [...filterHarvestMonths].some(m => monthInRange(m, p.harvestingStart, p.harvestingEnd))
+        if (!ok) return false
+      }
+      if (filterPlantMonths.size > 0) {
+        const ok = [...filterPlantMonths].some(m => monthInRange(m, p.plantingStart, p.plantingEnd))
+        if (!ok) return false
+      }
+      return true
+    })
+  }, [allPlants, search, selectedPlantIds, filterType, filterLight, filterHarvestMonths, filterPlantMonths])
 
   const selected = useMemo(
     () => allPlants.filter((p) => selectedPlantIds.includes(p.id)),
@@ -49,10 +99,12 @@ export function PlantSelector() {
       </div>
 
       {/* Two-column layout: grid + sidebar */}
-      <div className="flex gap-5 min-h-[380px]">
+      <div className="flex gap-5">
 
-        {/* Left: search + available grid */}
+        {/* Left: search + filters + available grid */}
         <div className="flex flex-col gap-3 flex-1 min-w-0">
+
+          {/* Search */}
           <div className="relative">
             <svg className="absolute left-4 top-1/2 -translate-y-1/2 text-[#5a5248] pointer-events-none"
               width="16" height="16" viewBox="0 0 16 16" fill="none">
@@ -68,6 +120,125 @@ export function PlantSelector() {
             />
           </div>
 
+          {/* Filters */}
+          <div className="flex flex-col gap-2.5 p-3 rounded-lg border border-white/6 bg-[#0d0d0d]">
+
+            {/* Row 1: Type + Light */}
+            <div className="flex items-center gap-4 flex-wrap">
+              {/* Type */}
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] text-[#5a5248] uppercase tracking-widest w-9 shrink-0">Type</span>
+                <div className="flex items-center gap-0.5 p-0.5 rounded-md border border-white/8 bg-[#111]">
+                  {(['all', 'plant', 'tree'] as const).map(v => (
+                    <button
+                      key={v}
+                      type="button"
+                      onClick={() => setFilterType(v)}
+                      className={[
+                        'px-2.5 py-0.5 rounded text-[10px] font-medium tracking-wide transition-all cursor-pointer',
+                        filterType === v
+                          ? 'bg-[#c9a84c] text-[#0a0a0a]'
+                          : 'text-[#5a5248] hover:text-[#9a9080] bg-transparent',
+                      ].join(' ')}
+                    >
+                      {v === 'all' ? 'All' : v === 'plant' ? '🌿 Plant' : '🌳 Tree'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Light */}
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] text-[#5a5248] uppercase tracking-widest w-9 shrink-0">Light</span>
+                <div className="flex items-center gap-0.5 p-0.5 rounded-md border border-white/8 bg-[#111]">
+                  {(['all', 'sun', 'shade'] as const).map(v => (
+                    <button
+                      key={v}
+                      type="button"
+                      onClick={() => setFilterLight(v)}
+                      className={[
+                        'px-2.5 py-0.5 rounded text-[10px] font-medium tracking-wide transition-all cursor-pointer',
+                        filterLight === v
+                          ? 'bg-[#c9a84c] text-[#0a0a0a]'
+                          : 'text-[#5a5248] hover:text-[#9a9080] bg-transparent',
+                      ].join(' ')}
+                    >
+                      {v === 'all' ? 'All' : v === 'sun' ? '☀ Sun' : '🌑 Shade'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Clear */}
+              {hasActiveFilters && (
+                <button
+                  type="button"
+                  onClick={clearFilters}
+                  className="ml-auto text-[10px] text-[#c9a84c]/60 hover:text-[#c9a84c] transition-colors cursor-pointer bg-transparent border-0 uppercase tracking-widest"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+
+            {/* Row 2: Harvest months */}
+            <div className="flex items-start gap-2">
+              <span className="text-[10px] text-[#5a5248] uppercase tracking-widest w-14 shrink-0 pt-0.5">
+                Harvest
+              </span>
+              <div className="flex flex-wrap gap-1">
+                {MONTHS.map((m, i) => {
+                  const month = i + 1
+                  const active = filterHarvestMonths.has(month)
+                  return (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() => toggleHarvestMonth(month)}
+                      className={[
+                        'px-1.5 py-0.5 rounded text-[10px] font-medium transition-all cursor-pointer border',
+                        active
+                          ? 'bg-[#c9a84c]/20 border-[#c9a84c]/60 text-[#c9a84c]'
+                          : 'bg-transparent border-white/8 text-[#5a5248] hover:text-[#9a9080] hover:border-white/20',
+                      ].join(' ')}
+                    >
+                      {m}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+
+            {/* Row 3: Planting months */}
+            <div className="flex items-start gap-2">
+              <span className="text-[10px] text-[#5a5248] uppercase tracking-widest w-14 shrink-0 pt-0.5">
+                Plant
+              </span>
+              <div className="flex flex-wrap gap-1">
+                {MONTHS.map((m, i) => {
+                  const month = i + 1
+                  const active = filterPlantMonths.has(month)
+                  return (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() => togglePlantMonth(month)}
+                      className={[
+                        'px-1.5 py-0.5 rounded text-[10px] font-medium transition-all cursor-pointer border',
+                        active
+                          ? 'bg-[#4e8f63]/20 border-[#4e8f63]/60 text-[#4e8f63]'
+                          : 'bg-transparent border-white/8 text-[#5a5248] hover:text-[#9a9080] hover:border-white/20',
+                      ].join(' ')}
+                    >
+                      {m}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          </div>
+
+          {/* Grid */}
           {loading ? (
             <LoadingGrid />
           ) : error ? (
@@ -76,7 +247,9 @@ export function PlantSelector() {
             </p>
           ) : available.length === 0 ? (
             <p className="text-[#5a5248] text-sm py-8 text-center">
-              {selected.length === 0 ? t('step2.no_results') : 'All matching plants selected.'}
+              {!hasActiveFilters && selected.length === 0
+                ? t('step2.no_results')
+                : 'No plants match the current filters.'}
             </p>
           ) : (
             <div className="grid grid-cols-2 gap-3 overflow-y-auto pr-1" style={{ maxHeight: 340 }}>

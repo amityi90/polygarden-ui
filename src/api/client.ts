@@ -47,29 +47,19 @@ export function calculateMinMaxPV(body: CalculateMinMaxPVRequest): Promise<PVRan
   })
 }
 
-// POST /generate_layout_pdf — triggers a browser download of the PDF
-export async function downloadLayoutPdf(body: MakeGardenRequest): Promise<void> {
-  const res = await fetch(`${BASE_URL}/generate_layout_pdf`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  })
-  if (!res.ok) throw new Error(`PDF error ${res.status}`)
-  const blob = await res.blob()
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = 'garden_layout.pdf'
-  a.click()
-  URL.revokeObjectURL(url)
-}
-
 // POST /generate_field_layout
-export async function makeAgrivoltaicGarden(body: MakeGardenRequest): Promise<GardenLayout> {
-  const raw = await request<unknown>('/generate_field_layout', {
+// The response is a GeoJSON FeatureCollection with an extra `pdf_base64` field.
+// We strip the PDF out before returning the layout so it doesn't bloat the store.
+export async function makeAgrivoltaicGarden(
+  body: MakeGardenRequest,
+): Promise<{ layout: GardenLayout; pdfBase64: string | null }> {
+  const raw = await request<Record<string, unknown>>('/generate_field_layout', {
     method: 'POST',
     body: JSON.stringify(body),
   })
-  console.log('[generate_field_layout] raw response:', raw)
-  return raw as GardenLayout
+  console.log('[makeAgrivoltaicGarden] response keys:', Object.keys(raw))
+  console.log('[makeAgrivoltaicGarden] pdf_base64 type:', typeof raw['pdf_base64'], '| value (first 60):', typeof raw['pdf_base64'] === 'string' ? (raw['pdf_base64'] as string).slice(0, 60) : raw['pdf_base64'])
+  const pdfBase64 = typeof raw['pdf_base64'] === 'string' ? raw['pdf_base64'] : null
+  delete raw['pdf_base64']
+  return { layout: raw as unknown as GardenLayout, pdfBase64 }
 }

@@ -193,3 +193,28 @@ export function TreeIcon({ size = 13 }: { size?: number }) {
     </svg>
   )
 }
+
+export function SunIcon({ size = 13 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <circle cx="12" cy="12" r="5" fill="currentColor" fillOpacity="0.55" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M17.66 6.34l-1.41 1.41M4.93 19.07l1.41-1.41"
+        stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+export function ShadeIcon({ size = 13 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      {/* Same rays as SunIcon */}
+      <path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M17.66 6.34l-1.41 1.41M4.93 19.07l1.41-1.41"
+        stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      {/* Sun circle — faint, so the blocker reads clearly */}
+      <circle cx="12" cy="12" r="5"
+        stroke="currentColor" strokeWidth="1.5" fill="currentColor" fillOpacity="0.15" />
+      {/* Blocker: solid half-disc covering the bottom of the sun */}
+      <path d="M7 12a5 5 0 0 0 10 0Z" fill="currentColor" fillOpacity="0.9" />
+    </svg>
+  )
+}

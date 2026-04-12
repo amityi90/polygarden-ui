@@ -14,6 +14,7 @@ import { Layout } from './components/layout/Layout'
 import { HomePage } from './pages/HomePage'
 import { WizardPage } from './pages/WizardPage'
 import { SummaryPage } from './pages/SummaryPage'
+import { AboutPage } from './pages/AboutPage'
 
 export default function App() {
   return (
@@ -23,6 +24,7 @@ export default function App() {
           <Route path="/"        element={<HomePage />} />
           <Route path="/planner" element={<WizardPage />} />
           <Route path="/summary" element={<SummaryPage />} />
+          <Route path="/about"   element={<AboutPage />} />
         </Routes>
       </Layout>
     </BrowserRouter>

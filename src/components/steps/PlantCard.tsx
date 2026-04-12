@@ -1,7 +1,7 @@
 import type { Plant } from '../../models/Plant'
 import {
   buildBubbles, useRadialHover, RadialRing,
-  DropletIcon, HeightIcon,
+  DropletIcon, HeightIcon, TreeIcon, SunIcon, ShadeIcon,
 } from './plantRadial'
 
 interface PlantCardProps {
@@ -37,9 +37,16 @@ export function PlantCard({ plant, selected, onToggle }: PlantCardProps) {
           </div>
         )}
 
-        <div className="w-10 h-10 rounded-lg bg-[#3a6b4a]/20 border border-[#3a6b4a]/30 flex items-center justify-center text-lg">
-          🌿
-        </div>
+        {/* Icon box: 🌿 for plants, TreeIcon for trees */}
+        {plant.isTree ? (
+          <div className="w-10 h-10 rounded-lg bg-[#8b6c42]/20 border border-[#8b6c42]/30 flex items-center justify-center text-[#8b6c42]">
+            <TreeIcon size={20} />
+          </div>
+        ) : (
+          <div className="w-10 h-10 rounded-lg bg-[#3a6b4a]/20 border border-[#3a6b4a]/30 flex items-center justify-center text-lg">
+            🌿
+          </div>
+        )}
 
         <p className="font-['Cormorant_Garant'] text-base font-semibold text-[#f0ece3] leading-tight">
           {plant.name}
@@ -51,6 +58,14 @@ export function PlantCard({ plant, selected, onToggle }: PlantCardProps) {
           </span>
           <span className="flex items-center gap-1 text-[11px]">
             <HeightIcon size={11} /> {plant.heightLabel}
+          </span>
+          {/* Sun / shade indicator */}
+          <span
+            className="flex items-center gap-1 text-[11px] ml-auto"
+            style={{ color: plant.shadow ? '#9a9080' : '#c9a84c' }}
+            title={plant.shadowLabel}
+          >
+            {plant.shadow ? <ShadeIcon size={11} /> : <SunIcon size={11} />}
           </span>
         </div>
       </button>

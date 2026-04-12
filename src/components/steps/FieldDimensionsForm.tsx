@@ -23,8 +23,8 @@ import { calculateMinMaxPV } from '../../api/client'
 import { useState } from 'react'
 
 const schema = z.object({
-  length: z.coerce.number().positive().min(1),
-  width: z.coerce.number().positive().min(1),
+  length: z.coerce.number().min(1, 'Must be between 1 and 200 m.').max(200, 'Must be between 1 and 200 m.'),
+  width: z.coerce.number().min(1, 'Must be between 1 and 200 m.').max(200, 'Must be between 1 and 200 m.'),
   north_coordinate: z.coerce.number().min(-90).max(90),
 })
 
@@ -79,6 +79,8 @@ export function FieldDimensionsForm() {
             label={t('step1.length')}
             unit={t('step1.unit')}
             placeholder={t('step1.length_placeholder')}
+            min={1}
+            max={200}
             error={errors.length?.message}
             registration={register('length')}
           />
@@ -86,6 +88,8 @@ export function FieldDimensionsForm() {
             label={t('step1.width')}
             unit={t('step1.unit')}
             placeholder={t('step1.width_placeholder')}
+            min={1}
+            max={200}
             error={errors.width?.message}
             registration={register('width')}
           />
@@ -130,11 +134,13 @@ interface FieldInputProps {
   label: string
   unit: string
   placeholder: string
+  min?: number
+  max?: number
   error?: string
   registration: ReturnType<ReturnType<typeof useForm>['register']>
 }
 
-function FieldInput({ label, unit, placeholder, error, registration }: FieldInputProps) {
+function FieldInput({ label, unit, placeholder, min, max, error, registration }: FieldInputProps) {
   return (
     <div className="flex flex-col gap-2">
       <label className="text-xs font-medium tracking-widest text-[#9a9080] uppercase">
@@ -144,7 +150,8 @@ function FieldInput({ label, unit, placeholder, error, registration }: FieldInpu
         <input
           {...registration}
           type="number"
-          min="1"
+          min={min}
+          max={max}
           placeholder={placeholder}
           className={[
             'w-full bg-[#111111] border rounded-lg px-4 py-3 pr-12 text-[#f0ece3] placeholder-[#5a5248] text-sm',

@@ -25,7 +25,7 @@ function buildSchema(minKw: number, maxKw: number) {
   return z.object({
     pv_production: z.number().min(minKw).max(maxKw),
     battery_size: z.coerce.number().positive(),
-    system_height: z.coerce.number().positive(),
+    system_height: z.coerce.number().int('Must be a whole number.').min(3, 'Must be between 3 and 9 m.').max(9, 'Must be between 3 and 9 m.'),
   })
 }
 
@@ -38,7 +38,7 @@ type FormValues = {
 export function PVSystemSelector() {
   const { t } = useTranslation()
   const navigate = useNavigate()
-  const { pvRange, pvSystem, field, selectedPlantIds, setPVSystem, setGardenLayout, setStep } = useGardenStore()
+  const { pvRange, pvSystem, field, selectedPlantIds, setPVSystem, setGardenLayout, setPdfBase64, setStep } = useGardenStore()
   const [apiError, setApiError] = useState<string | null>(null)
 
   const min = pvRange?.min_kw ?? 0
@@ -84,8 +84,9 @@ export function PVSystemSelector() {
     }
 
     try {
-      const layout = await makeAgrivoltaicGarden(body)
+      const { layout, pdfBase64 } = await makeAgrivoltaicGarden(body)
       setGardenLayout(layout)
+      setPdfBase64(pdfBase64)
       navigate('/summary')
     } catch (err) {
       setApiError(err instanceof Error ? err.message : 'Unknown error')
@@ -165,6 +166,9 @@ export function PVSystemSelector() {
           <NumericInput
             label={t('step3.system_height')}
             unit="m"
+            step={1}
+            min={3}
+            max={9}
             error={errors.system_height?.message}
             registration={register('system_height')}
           />
@@ -204,11 +208,14 @@ export function PVSystemSelector() {
 interface NumericInputProps {
   label: string
   unit: string
+  step?: number | 'any'
+  min?: number
+  max?: number
   error?: string
   registration: ReturnType<ReturnType<typeof useForm>['register']>
 }
 
-function NumericInput({ label, unit, error, registration }: NumericInputProps) {
+function NumericInput({ label, unit, step = 'any', min, max, error, registration }: NumericInputProps) {
   return (
     <div className="flex flex-col gap-2">
       <label className="text-xs font-medium tracking-widest text-[#9a9080] uppercase">
@@ -218,7 +225,9 @@ function NumericInput({ label, unit, error, registration }: NumericInputProps) {
         <input
           {...registration}
           type="number"
-          step="any"
+          step={step}
+          min={min}
+          max={max}
           className={[
             'w-full bg-[#111111] border rounded-lg px-4 py-3 pr-10 text-[#f0ece3] placeholder-[#5a5248] text-sm',
             'focus:outline-none focus:border-[#c9a84c]/60 focus:ring-1 focus:ring-[#c9a84c]/20 transition-all',
