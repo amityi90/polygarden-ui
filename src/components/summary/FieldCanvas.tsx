@@ -187,6 +187,69 @@ export function FieldCanvas({ layout, canvasWidth, canvasHeight, hiddenSpecies }
     return () => el.removeEventListener('wheel', onWheel)
   }, [])
 
+  // ── Pinch-to-zoom + two-finger pan (touch) ───────────────────────────────
+  const touchRef = useRef<{ dist: number; midX: number; midY: number; panX: number; panY: number; zoom: number } | null>(null)
+
+  useEffect(() => {
+    const el = canvasRef.current
+    if (!el) return
+
+    const dist = (a: Touch, b: Touch) =>
+      Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY)
+
+    const onTouchStart = (e: TouchEvent) => {
+      if (e.touches.length !== 2) return
+      e.preventDefault()
+      const [a, b] = [e.touches[0], e.touches[1]]
+      const rect = el.getBoundingClientRect()
+      touchRef.current = {
+        dist: dist(a, b),
+        midX: (a.clientX + b.clientX) / 2 - rect.left,
+        midY: (a.clientY + b.clientY) / 2 - rect.top,
+        panX: transformRef.current.panX,
+        panY: transformRef.current.panY,
+        zoom: transformRef.current.zoom,
+      }
+    }
+
+    const onTouchMove = (e: TouchEvent) => {
+      if (e.touches.length !== 2 || !touchRef.current) return
+      e.preventDefault()
+      const [a, b] = [e.touches[0], e.touches[1]]
+      const rect = el.getBoundingClientRect()
+      const curDist = dist(a, b)
+      const curMidX = (a.clientX + b.clientX) / 2 - rect.left
+      const curMidY = (a.clientY + b.clientY) / 2 - rect.top
+      const t0 = touchRef.current
+
+      // Zoom around the initial midpoint
+      const scale = curDist / t0.dist
+      const nz = Math.max(0.5, Math.min(12, t0.zoom * scale))
+      const ratio = nz / t0.zoom
+
+      // Pan: combine zoom-induced shift with finger-drag offset
+      const nx = t0.midX + (t0.panX - t0.midX) * ratio + (curMidX - t0.midX)
+      const ny = t0.midY + (t0.panY - t0.midY) * ratio + (curMidY - t0.midY)
+
+      setZoom(nz)
+      setPanX(nx)
+      setPanY(ny)
+    }
+
+    const onTouchEnd = () => { touchRef.current = null }
+
+    el.addEventListener('touchstart', onTouchStart, { passive: false })
+    el.addEventListener('touchmove',  onTouchMove,  { passive: false })
+    el.addEventListener('touchend',   onTouchEnd)
+    el.addEventListener('touchcancel', onTouchEnd)
+    return () => {
+      el.removeEventListener('touchstart', onTouchStart)
+      el.removeEventListener('touchmove',  onTouchMove)
+      el.removeEventListener('touchend',   onTouchEnd)
+      el.removeEventListener('touchcancel', onTouchEnd)
+    }
+  }, [])
+
   // ── Build draw items ──────────────────────────────────────────────────────
   const items = useMemo(() => {
     const rects:   RectItem[]   = []
