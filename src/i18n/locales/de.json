@@ -68,6 +68,11 @@
       "required": "Dieses Feld ist erforderlich.",
       "positive": "Muss eine positive Zahl sein.",
       "out_of_range": "Muss zwischen {{min}} und {{max}} liegen."
+    },
+    "generating": {
+      "title": "Feldlayout wird erstellt…",
+      "subtitle": "Bei großen Feldern kann es bis zu 5 Minuten dauern.",
+      "lost_connection": "Verbindung beim Erstellen des Layouts verloren – bitte erneut versuchen."
     }
   },
   "summary": {

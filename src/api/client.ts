@@ -17,7 +17,7 @@ import type {
 } from '../types'
 import { Plant, type RawPlant } from '../models/Plant'
 
-const BASE_URL = 'http://localhost:5000'
+const BASE_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:5000'
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`, {
@@ -48,18 +48,67 @@ export function calculateMinMaxPV(body: CalculateMinMaxPVRequest): Promise<PVRan
 }
 
 // POST /generate_field_layout
-// The response is a GeoJSON FeatureCollection with an extra `pdf_base64` field.
-// We strip the PDF out before returning the layout so it doesn't bloat the store.
+// The endpoint is async: POST returns 202 + { job_id }; the result is fetched
+// by polling GET /job_status/<job_id> every 2s until status="done" or "failed".
+// The done-result no longer contains a PDF — instead the result has a
+// `pdf_path` referencing Supabase Storage. Downloads use getPdfUrl() (below)
+// to mint a short-lived signed URL on demand.
+const POLL_INTERVAL_MS = 2000
+const MAX_CONSECUTIVE_ERRORS = 5
+
+type JobStatusResponse =
+  | { status: 'queued' | 'running' }
+  | { status: 'done'; result: Record<string, unknown> }
+  | { status: 'failed'; error: string }
+
 export async function makeAgrivoltaicGarden(
   body: MakeGardenRequest,
-): Promise<{ layout: GardenLayout; pdfBase64: string | null }> {
-  const raw = await request<Record<string, unknown>>('/generate_field_layout', {
+  signal?: AbortSignal,
+): Promise<{ layout: GardenLayout; jobId: string }> {
+  const { job_id } = await request<{ job_id: string }>('/generate_field_layout', {
     method: 'POST',
     body: JSON.stringify(body),
+    signal,
   })
-  console.log('[makeAgrivoltaicGarden] response keys:', Object.keys(raw))
-  console.log('[makeAgrivoltaicGarden] pdf_base64 type:', typeof raw['pdf_base64'], '| value (first 60):', typeof raw['pdf_base64'] === 'string' ? (raw['pdf_base64'] as string).slice(0, 60) : raw['pdf_base64'])
-  const pdfBase64 = typeof raw['pdf_base64'] === 'string' ? raw['pdf_base64'] : null
-  delete raw['pdf_base64']
-  return { layout: raw as unknown as GardenLayout, pdfBase64 }
+
+  const result = await pollJob(job_id, signal)
+  return { layout: result as unknown as GardenLayout, jobId: job_id }
+}
+
+// GET /job_pdf_url/<jobId> — returns a Supabase Storage signed URL (30-min TTL).
+export async function getPdfUrl(jobId: string): Promise<string> {
+  const { url } = await request<{ url: string }>(`/job_pdf_url/${jobId}`)
+  return url
+}
+
+function pollJob(jobId: string, signal?: AbortSignal): Promise<Record<string, unknown>> {
+  return new Promise((resolve, reject) => {
+    let consecutiveErrors = 0
+    const intervalId = setInterval(async () => {
+      if (signal?.aborted) {
+        clearInterval(intervalId)
+        reject(new DOMException('Aborted', 'AbortError'))
+        return
+      }
+      try {
+        const res = await fetch(`${BASE_URL}/job_status/${jobId}`, { signal })
+        const data = (await res.json()) as JobStatusResponse
+        consecutiveErrors = 0
+        if (data.status === 'done')   { clearInterval(intervalId); resolve(data.result) }
+        if (data.status === 'failed') { clearInterval(intervalId); reject(new Error(data.error)) }
+        // queued / running → keep polling
+      } catch (err) {
+        if ((err as DOMException)?.name === 'AbortError') {
+          clearInterval(intervalId)
+          reject(err)
+          return
+        }
+        consecutiveErrors += 1
+        if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+          clearInterval(intervalId)
+          reject(new Error('lost_connection'))
+        }
+      }
+    }, POLL_INTERVAL_MS)
+  })
 }

@@ -50,9 +50,10 @@ interface GardenStore {
   gardenLayout: GardenLayout | null
   setGardenLayout: (layout: GardenLayout) => void
 
-  // PDF embedded in the /generate_field_layout response (Base64)
-  pdfBase64: string | null
-  setPdfBase64: (b64: string | null) => void
+  // Job id from the async /generate_field_layout response — used to mint a
+  // signed PDF download URL on demand via GET /job_pdf_url/<jobId>.
+  jobId: string | null
+  setJobId: (id: string | null) => void
 
   // Reset everything
   reset: () => void
@@ -66,7 +67,7 @@ const initialState = {
   pvRange: null,
   pvSystem: null,
   gardenLayout: null,
-  pdfBase64: null,
+  jobId: null,
 }
 
 export const useGardenStore = create<GardenStore>()(
@@ -93,7 +94,7 @@ export const useGardenStore = create<GardenStore>()(
 
       setGardenLayout: (gardenLayout) => set({ gardenLayout }),
 
-      setPdfBase64: (pdfBase64) => set({ pdfBase64 }),
+      setJobId: (jobId) => set({ jobId }),
 
       reset: () => set(initialState),
     }),

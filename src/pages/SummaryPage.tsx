@@ -1,6 +1,7 @@
 import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router-dom'
 import { useGardenStore } from '../store/gardenStore'
+import { getPdfUrl } from '../api/client'
 import { FieldCanvas } from '../components/summary/FieldCanvas'
 import { FieldCanvas3D } from '../components/summary/FieldCanvas3D'
 import { SpeciesLegend, type SpeciesEntry } from '../components/summary/SpeciesLegend'
@@ -12,7 +13,7 @@ const CANVAS_HEIGHT = 560
 export function SummaryPage() {
   const { t } = useTranslation()
   const navigate = useNavigate()
-  const { gardenLayout, reset, field, allPlants, selectedPlantIds, pdfBase64 } = useGardenStore()
+  const { gardenLayout, reset, field, allPlants, selectedPlantIds, jobId } = useGardenStore()
   const containerRef = useRef<HTMLDivElement>(null)
   const [canvasWidth, setCanvasWidth] = useState(800)
   const [view, setView] = useState<'2d' | '3d'>('2d')
@@ -115,27 +116,53 @@ export function SummaryPage() {
     navigate('/planner')
   }
 
-  const handleDownloadPdf = () => {
+  const handleDownloadPdf = async () => {
     setPdfError(null)
-    if (!pdfBase64) {
-      setPdfError('PDF data not available — please regenerate the layout.')
+    if (!jobId) {
+      setPdfError('PDF not available — please regenerate the layout.')
       return
     }
+
+    // Open a placeholder tab synchronously, while we're still inside the
+    // click-event call stack. Popup blockers allow window.open here because
+    // the call is part of the user gesture. If we waited until after the
+    // awaits below, the browser would treat it as programmatic and block it.
+    // We'll navigate this tab to the PDF once we have the bytes.
+    const newTab = window.open('about:blank', '_blank')
+
     try {
-      // Strip any whitespace/newlines some encoders add between chunks
-      const clean  = pdfBase64.replace(/\s/g, '')
-      const binary = atob(clean)
-      const bytes  = new Uint8Array(binary.length)
-      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
-      const blob = new Blob([bytes], { type: 'application/pdf' })
-      const url  = URL.createObjectURL(blob)
-      const a    = Object.assign(document.createElement('a'), { href: url, download: 'garden_layout.pdf' })
+      const signedUrl = await getPdfUrl(jobId)
+
+      // Fetch the PDF bytes ourselves. The <a download> attribute is
+      // *ignored* for cross-origin URLs, and our PDF lives on Supabase
+      // Storage (a different origin). To force a download we have to
+      // wrap the bytes as a Blob and mint a same-origin blob URL via
+      // URL.createObjectURL — the download attribute honours that, and
+      // the new tab can navigate to it too.
+      const response = await fetch(signedUrl)
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      const blob = await response.blob()
+      const blobUrl = URL.createObjectURL(blob)
+
+      // (a) Save to disk
+      const a = document.createElement('a')
+      a.href = blobUrl
+      a.download = 'garden_layout.pdf'
+      a.style.display = 'none'
       document.body.appendChild(a)
       a.click()
       document.body.removeChild(a)
-      URL.revokeObjectURL(url)
+
+      // (b) Show in the placeholder tab we opened pre-await
+      if (newTab) newTab.location.href = blobUrl
+
+      // Blob URLs hold their bytes in memory until revoked. Give both
+      // the save dialog and the new tab plenty of time to read the URL
+      // before releasing it.
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 120_000)
     } catch (e) {
-      setPdfError(`Failed to decode PDF: ${e instanceof Error ? e.message : String(e)}`)
+      if (newTab) newTab.close()
+      setPdfError(`Failed to download PDF: ${e instanceof Error ? e.message : String(e)}`)
     }
   }
 

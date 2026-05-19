@@ -17,8 +17,9 @@ import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router-dom'
 import { useGardenStore } from '../../store/gardenStore'
 import { makeAgrivoltaicGarden } from '../../api/client'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { MakeGardenRequest } from '../../types'
+import { LoadingModal } from '../ui/LoadingModal'
 
 // Schema is built dynamically so we can reference pvRange from the store
 function buildSchema(minKw: number, maxKw: number) {
@@ -38,8 +39,10 @@ type FormValues = {
 export function PVSystemSelector() {
   const { t } = useTranslation()
   const navigate = useNavigate()
-  const { pvRange, pvSystem, field, selectedPlantIds, setPVSystem, setGardenLayout, setPdfBase64, setStep } = useGardenStore()
+  const { pvRange, pvSystem, field, selectedPlantIds, setPVSystem, setGardenLayout, setJobId, setStep } = useGardenStore()
   const [apiError, setApiError] = useState<string | null>(null)
+  const abortRef = useRef<AbortController | null>(null)
+  useEffect(() => () => abortRef.current?.abort(), [])
 
   const min = pvRange?.min_kw ?? 0
   const max = pvRange?.max_kw ?? 100
@@ -84,12 +87,15 @@ export function PVSystemSelector() {
     }
 
     try {
-      const { layout, pdfBase64 } = await makeAgrivoltaicGarden(body)
+      abortRef.current = new AbortController()
+      const { layout, jobId } = await makeAgrivoltaicGarden(body, abortRef.current.signal)
       setGardenLayout(layout)
-      setPdfBase64(pdfBase64)
+      setJobId(jobId)
       navigate('/summary')
     } catch (err) {
-      setApiError(err instanceof Error ? err.message : 'Unknown error')
+      if ((err as DOMException)?.name === 'AbortError') return
+      const msg = err instanceof Error ? err.message : 'Unknown error'
+      setApiError(msg === 'lost_connection' ? t('step3.generating.lost_connection') : msg)
     }
   }
 
@@ -102,6 +108,7 @@ export function PVSystemSelector() {
   }
 
   return (
+    <>
     <div className="flex flex-col gap-8">
       {/* Heading */}
       <div className="flex flex-col gap-2">
@@ -200,6 +207,13 @@ export function PVSystemSelector() {
         </div>
       </form>
     </div>
+    {isSubmitting && (
+      <LoadingModal
+        title={t('step3.generating.title')}
+        subtitle={t('step3.generating.subtitle')}
+      />
+    )}
+    </>
   )
 }
 

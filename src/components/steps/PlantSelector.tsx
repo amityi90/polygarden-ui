@@ -99,7 +99,7 @@ export function PlantSelector() {
       </div>
 
       {/* Two-column layout: grid + sidebar */}
-      <div className="flex gap-5">
+      <div className="flex flex-col md:flex-row gap-5">
 
         {/* Left: search + filters + available grid */}
         <div className="flex flex-col gap-3 flex-1 min-w-0">
@@ -252,7 +252,7 @@ export function PlantSelector() {
                 : 'No plants match the current filters.'}
             </p>
           ) : (
-            <div className="grid grid-cols-2 gap-3 overflow-y-auto pr-1" style={{ maxHeight: 340 }}>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 overflow-y-auto pr-1" style={{ maxHeight: 340 }}>
               {available.map((plant) => (
                 <PlantCard key={plant.id} plant={plant} selected={false} onToggle={togglePlant} />
               ))}
@@ -261,7 +261,7 @@ export function PlantSelector() {
         </div>
 
         {/* Right: selected sidebar */}
-        <div className="w-44 shrink-0 flex flex-col gap-3">
+        <div className="w-full md:w-44 md:shrink-0 flex flex-col gap-3">
           <div className="flex items-center gap-2">
             <span className="text-xs font-medium tracking-widest text-[#9a9080] uppercase">
               Selected

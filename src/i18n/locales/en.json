@@ -68,6 +68,11 @@
       "required": "This field is required.",
       "positive": "Must be a positive number.",
       "out_of_range": "Must be between {{min}} and {{max}}."
+    },
+    "generating": {
+      "title": "Generating field layout…",
+      "subtitle": "Large fields can take up to 5 minutes.",
+      "lost_connection": "Lost connection while generating layout — please try again."
     }
   },
   "summary": {
