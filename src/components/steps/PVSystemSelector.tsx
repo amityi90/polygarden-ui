@@ -26,7 +26,7 @@ function buildSchema(minKw: number, maxKw: number) {
   return z.object({
     pv_production: z.number().min(minKw).max(maxKw),
     battery_size: z.coerce.number().positive(),
-    system_height: z.coerce.number().int('Must be a whole number.').min(3, 'Must be between 3 and 9 m.').max(9, 'Must be between 3 and 9 m.'),
+    system_height: z.coerce.number().int('Must be a whole number.').min(4, 'Must be between 4 and 9 m.').max(9, 'Must be between 4 and 9 m.'),
   })
 }
 
@@ -174,7 +174,7 @@ export function PVSystemSelector() {
             label={t('step3.system_height')}
             unit="m"
             step={1}
-            min={3}
+            min={4}
             max={9}
             error={errors.system_height?.message}
             registration={register('system_height')}

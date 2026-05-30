@@ -311,6 +311,61 @@ export function FieldCanvas3D({ hiddenSpecies, speciesList }: FieldCanvas3DProps
     return () => { Plotly.purge(el) }
   }, [traces])
 
+  // Pinch-to-zoom on touch devices: scale the Plotly camera eye vector based on
+  // the change in distance between two fingers. Plotly's built-in 3D touch
+  // handles single-finger rotate but not pinch-zoom on the camera distance.
+  useEffect(() => {
+    const el = plotRef.current
+    if (!el || traces.length === 0) return
+
+    const fallbackEye = { x: 1.5, y: -1.5, z: 0.9 }
+    const dist = (a: Touch, b: Touch) =>
+      Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY)
+
+    let active = false
+    let startDist = 0
+    let startEye = fallbackEye
+
+    const onStart = (e: TouchEvent) => {
+      if (e.touches.length !== 2) { active = false; return }
+      e.preventDefault()
+      active = true
+      startDist = dist(e.touches[0], e.touches[1])
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const cam = (el as any)._fullLayout?.scene?.camera?.eye
+      startEye = cam ? { x: cam.x, y: cam.y, z: cam.z } : fallbackEye
+    }
+
+    const onMove = (e: TouchEvent) => {
+      if (!active || e.touches.length !== 2) return
+      e.preventDefault()
+      const d = dist(e.touches[0], e.touches[1])
+      if (d === 0) return
+      const scale = Math.max(0.2, Math.min(5, startDist / d))
+      Plotly.relayout(el, {
+        'scene.camera.eye': {
+          x: startEye.x * scale,
+          y: startEye.y * scale,
+          z: startEye.z * scale,
+        },
+      })
+    }
+
+    const onEnd = () => { active = false }
+
+    el.addEventListener('touchstart',  onStart, { passive: false })
+    el.addEventListener('touchmove',   onMove,  { passive: false })
+    el.addEventListener('touchend',    onEnd)
+    el.addEventListener('touchcancel', onEnd)
+
+    return () => {
+      el.removeEventListener('touchstart',  onStart)
+      el.removeEventListener('touchmove',   onMove)
+      el.removeEventListener('touchend',    onEnd)
+      el.removeEventListener('touchcancel', onEnd)
+    }
+  }, [traces])
+
   if (!field) {
     return (
       <div className="w-full h-[560px] flex items-center justify-center text-[#9a9080] text-sm">
@@ -327,5 +382,5 @@ export function FieldCanvas3D({ hiddenSpecies, speciesList }: FieldCanvas3DProps
     )
   }
 
-  return <div ref={plotRef} className="w-full h-[560px]" />
+  return <div ref={plotRef} className="w-full h-[560px]" style={{ touchAction: 'none' }} />
 }
