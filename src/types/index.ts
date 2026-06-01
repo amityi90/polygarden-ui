@@ -50,6 +50,14 @@ export interface MakeGardenRequest {
   system_height: number
 }
 
+// Garden Planner — the ecological circle-packing layout needs only the plot
+// dimensions and the chosen plants (no latitude / PV).
+export interface MakeGardenLayoutRequest {
+  selected_plant_ids: number[]
+  field_length: number
+  field_width: number
+}
+
 // GeoJSON FeatureCollection — each Feature's properties describe what it is.
 // property shapes:
 //   type: 'plant_row'  → { type, row_index, plants: string[] }

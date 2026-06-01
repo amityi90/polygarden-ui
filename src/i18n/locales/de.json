@@ -2,7 +2,30 @@
   "nav": {
     "home": "Startseite",
     "planner": "Feldplaner",
+    "garden": "Gartenplaner",
     "about": "Über uns"
+  },
+  "home": {
+    "field": { "tagline": "Solarmodule + Pflanzen auf einer Fläche" },
+    "garden": { "tagline": "Mischkultur auf kleinem Beet" }
+  },
+  "garden": {
+    "generate": "Garten erstellen",
+    "building": "Ihr Garten wächst…",
+    "steps": {
+      "1": "Gartengröße",
+      "2": "Pflanzen"
+    },
+    "step1": {
+      "title": "Ihren Garten definieren",
+      "subtitle": "Geben Sie die Größe Ihres Gartenbeets in Metern an (bis zu 20 × 20).",
+      "length": "Länge",
+      "width": "Breite",
+      "length_placeholder": "z. B. 10",
+      "width_placeholder": "z. B. 8",
+      "unit": "m",
+      "hint": "Pflanzen werden als Kreise nach ihrer ausgewachsenen Breite gepackt — Partner gruppieren sich, Antagonisten bleiben getrennt."
+    }
   },
   "footer": {
     "tagline": "Intelligenter anbauen. Sonnenlicht ernten.",
@@ -12,7 +35,7 @@
     "step": "Schritt {{current}} von {{total}}",
     "next": "Weiter",
     "back": "Zurück",
-    "submit": "Meinen Garten erstellen",
+    "submit": "Mein Feld erstellen",
     "steps": {
       "1": "Feldgröße",
       "2": "Pflanzen",
@@ -92,6 +115,7 @@
     },
     "download_pdf": "PDF herunterladen",
     "pdf_loading": "PDF wird erstellt…",
-    "start_over": "Neuen Garten planen"
+    "start_over": "Neuen Garten planen",
+    "threed_locked": "Die 3D-Ansicht ist verfügbar, sobald der Garten fertig ist"
   }
 }

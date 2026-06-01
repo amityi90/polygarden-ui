@@ -15,11 +15,20 @@
 
 // @ts-ignore — plotly.js-dist-min ships without TypeScript declarations
 import Plotly from 'plotly.js-dist-min'
-import { useEffect, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef } from 'react'
 import type { Polygon, Point, MultiPoint } from 'geojson'
 import { useGardenStore } from '../../store/gardenStore'
 import { speciesColor } from './speciesColor'
 import type { SpeciesEntry } from './SpeciesLegend'
+
+// ─── Tiny 3-vector helpers (camera math for touch pan/zoom) ────────────────────
+type V3 = { x: number; y: number; z: number }
+const sub    = (a: V3, b: V3): V3 => ({ x: a.x - b.x, y: a.y - b.y, z: a.z - b.z })
+const add    = (a: V3, b: V3): V3 => ({ x: a.x + b.x, y: a.y + b.y, z: a.z + b.z })
+const scaleV = (a: V3, s: number): V3 => ({ x: a.x * s, y: a.y * s, z: a.z * s })
+const cross  = (a: V3, b: V3): V3 => ({ x: a.y * b.z - a.z * b.y, y: a.z * b.x - a.x * b.z, z: a.x * b.y - a.y * b.x })
+const vlen   = (a: V3): number => Math.hypot(a.x, a.y, a.z)
+const norm   = (a: V3): V3 => { const l = vlen(a) || 1; return { x: a.x / l, y: a.y / l, z: a.z / l } }
 
 // ─── Geometry helpers ─────────────────────────────────────────────────────────
 
@@ -55,6 +64,11 @@ function meshTrace(m: MeshAcc, color: string, opacity: number, name: string, leg
   return { type: 'mesh3d', ...m, color, opacity, hoverinfo: 'skip', name, showlegend: legend }
 }
 
+// Cone facets: high enough that the top disc reads as a circle, not a polygon.
+// Lower it if a very dense garden loads slowly (geometry is static now that the
+// hover restyle is removed).
+const CONE_SIDES = 16
+
 /**
  * Add an inverted cone to a mesh accumulator.
  *   - Apex (tip) at (cx, cy, 0)     — narrow base on the ground
@@ -69,7 +83,7 @@ function addCone(
   cx: number, cy: number,
   height: number, r: number,
   texts: string[], hoverText: string,
-  sides = 12,
+  sides = CONE_SIDES,
 ) {
   const base = m.x.length
   const vertexCount = 2 + sides
@@ -99,25 +113,81 @@ function addCone(
 interface FieldCanvas3DProps {
   hiddenSpecies?: ReadonlySet<string>
   speciesList?:   SpeciesEntry[]
+  /** Garden streaming: reveal newly-arrived cones in staggered waves. */
+  animateAppear?: boolean
+}
+
+interface Relation { companions: Set<string>; antagonists: Set<string> }
+interface SpeciesTrace { index: number; name: string; opacity: number }
+
+const PLOT_CONFIG = { displayModeBar: false, responsive: true, scrollZoom: true }
+const AXIS_BASE = { showgrid: true, gridcolor: '#1c241c', zeroline: false, color: '#5f6b58', showspikes: false }
+const SCENE = {
+  aspectmode: 'data',
+  bgcolor: '#0b0f0b',
+  uirevision: 'garden',   // keep the user's camera across react() updates while streaming
+}
+
+// Layout. Camera is set only on the first plot; react() omits it and the
+// constant uirevision makes Plotly preserve the user's rotation/zoom/pan.
+// Everything is drawn to scale (aspectmode 'data'); `unit` only labels the axes
+// (cm for the garden, m for the field) and `zMax` fits the z-axis to the tallest
+// cone so plants aren't lost in a tall empty box.
+function plotLayout(withCamera: boolean, zMax: number, unit: string) {
+  const scene: Record<string, unknown> = {
+    ...SCENE,
+    xaxis: { ...AXIS_BASE, title: `X (${unit})` },
+    yaxis: { ...AXIS_BASE, title: `Y (${unit})` },
+    zaxis: { title: `Height (${unit})`, showgrid: false, zeroline: false, color: '#5f6b58', showspikes: false, range: [-zMax * 0.03, zMax] },
+  }
+  if (withCamera) scene.camera = { eye: { x: 1.5, y: -1.55, z: 0.75 } }
+  return {
+    autosize: true, margin: { l: 0, r: 0, b: 0, t: 0 }, paper_bgcolor: '#0b0f0b',
+    scene, showlegend: false, uirevision: 'garden',
+  }
 }
 
 export function FieldCanvas3D({ hiddenSpecies, speciesList }: FieldCanvas3DProps) {
   const { gardenLayout, field } = useGardenStore()
   const plotRef = useRef<HTMLDivElement>(null)
 
-  const traces = useMemo(() => {
-    if (!gardenLayout || !field) return []
+  // Build the full Plotly trace set from the current layout.
+  const buildTraces = useCallback(() => {
+    if (!gardenLayout || !field) {
+      return { traces: [] as object[], speciesTraces: [] as SpeciesTrace[], relByName: new Map<string, Relation>(), hasRelations: false, zMax: 12, unit: 'm' }
+    }
     const features = gardenLayout.features
+    // A garden has only plant_instance + garden_bounds (no rows/PV/shadow/trees).
+    // Render the garden to scale in cm so axis numbers match plant sizes
+    // (15–200 cm); the field planner stays in metres (UNIT = 1).
+    const isGarden = !features.some((f) => {
+      const tp = (f.properties as Record<string, unknown>)?.type as string | undefined
+      return tp === 'plant_row' || tp === 'pv_row' || tp === 'gap' || tp === 'shadow' || tp === 'tree'
+    })
+    const UNIT = isGarden ? 100 : 1
+    const unit = isGarden ? 'cm' : 'm'
     const out: object[] = []
+    // Per-species cone traces (index in `out`, name, base opacity) + relations,
+    // used for the companion-shine / antagonist-blur hover effect.
+    const speciesTraces: SpeciesTrace[] = []
+    const relByName = new Map<string, Relation>()
+    let hasRelations = false
+    const captureRel = (name: string, p: Record<string, unknown>) => {
+      if (relByName.has(name)) return
+      const companions  = new Set((p.companion_names  as string[]) ?? [])
+      const antagonists = new Set((p.antagonist_names as string[]) ?? [])
+      if (companions.size || antagonists.size) hasRelations = true
+      relByName.set(name, { companions, antagonists })
+    }
 
-    // 1 ── Ground plane ────────────────────────────────────────────────────────
+    // 1 ── Ground plane (soft soil) ──────────────────────────────────────────────
     out.push({
       type: 'mesh3d',
-      x: [0, field.length, field.length, 0],
-      y: [0, 0, field.width, field.width],
+      x: [0, field.length * UNIT, field.length * UNIT, 0],
+      y: [0, 0, field.width * UNIT, field.width * UNIT],
       z: [0, 0, 0, 0],
       i: [0, 0], j: [1, 2], k: [2, 3],
-      color: '#121f12', opacity: 1,
+      color: '#16241a', opacity: 0.92, flatshading: true,
       hoverinfo: 'skip', showlegend: false,
     })
 
@@ -149,7 +219,9 @@ export function FieldCanvas3D({ hiddenSpecies, speciesList }: FieldCanvas3DProps
         if (hiddenSpecies?.has(p.plant_name as string)) continue
         const spread = (p.spread_m as number) ?? 0.3
         const height = (p.height_m as number) ?? spread
-        const s = ensureSpecies(p.plant_name as string, spread, height)
+        const name = p.plant_name as string
+        const s = ensureSpecies(name, spread, height)
+        captureRel(name, p)
         for (const [x, y] of (f.geometry as MultiPoint).coordinates) {
           s.x.push(x); s.y.push(y)
         }
@@ -164,6 +236,7 @@ export function FieldCanvas3D({ hiddenSpecies, speciesList }: FieldCanvas3DProps
         const spread = (p.spread_m as number) ?? 0.3
         const height = (p.height_m as number) ?? spread
         const s = ensureSpecies(p.plant_name as string, spread, height)
+        captureRel(p.plant_name as string, p)
         s.x.push(x); s.y.push(y)
         continue
       }
@@ -206,6 +279,7 @@ export function FieldCanvas3D({ hiddenSpecies, speciesList }: FieldCanvas3DProps
           const spread = (p.spread_m as number) ?? 0.3
           const height = (p.height_m as number) ?? spread
           const s = ensureSpecies(p.plant_name as string, spread, height)
+          captureRel(p.plant_name as string, p)
           s.x.push(cx); s.y.push(cy)
           break
         }
@@ -224,21 +298,23 @@ export function FieldCanvas3D({ hiddenSpecies, speciesList }: FieldCanvas3DProps
     // ── Emit one inverted-cone per plant, grouped by species ─────────────────
     for (const [name, { x, y, spread_m, height_m }] of bySpecies) {
       const color   = speciesColor(name).base
-      const r       = spread_m / 2
+      const r       = (spread_m / 2) * UNIT
+      const h       = height_m * UNIT
       const entry   = entryByName.get(name)
       const specMesh = emptyMesh()
       const texts:   string[] = []
 
+      // One tooltip per species, reused by reference for every cone vertex —
+      // avoids building ~N×sides distinct strings (a key memory saving).
+      const tip = [`<b>${name}</b>`, `Spread: ${Math.round(spread_m * 100)} cm`]
+      if (entry?.plantingSeason)   tip.push(`Plant: ${entry.plantingSeason}`)
+      if (entry?.harvestingSeason) tip.push(`Harvest: ${entry.harvestingSeason}`)
+      const hoverText = tip.join('<br>')
       for (let p = 0; p < x.length; p++) {
-        const lines = [`<b>${name}</b>`, `Spread: ${spread_m} m`]
-        if (entry?.heightLabel)      lines.push(`Height: ${entry.heightLabel}`)
-        if (entry?.plantingSeason)   lines.push(`Plant: ${entry.plantingSeason}`)
-        if (entry?.harvestingSeason) lines.push(`Harvest: ${entry.harvestingSeason}`)
-        if (entry?.count != null)    lines.push(`In field: ${entry.count}`)
-        lines.push(`X: ${x[p].toFixed(2)} m  Y: ${y[p].toFixed(2)} m`)
-        addCone(specMesh, x[p], y[p], height_m, r, texts, lines.join('<br>'))
+        addCone(specMesh, x[p] * UNIT, y[p] * UNIT, h, r, texts, hoverText)
       }
 
+      speciesTraces.push({ index: out.length, name, opacity: 0.85 })
       out.push({
         type: 'mesh3d', ...specMesh,
         text: texts,
@@ -268,15 +344,15 @@ export function FieldCanvas3D({ hiddenSpecies, speciesList }: FieldCanvas3DProps
         const treeMesh = emptyMesh()
         const texts:   string[] = []
 
+        const tip = [`<b>${name}</b>`, `Spread: ${(r * 2).toFixed(1)} m`, `Height: ${height.toFixed(1)} m`]
+        if (entry?.plantingSeason)   tip.push(`Plant: ${entry.plantingSeason}`)
+        if (entry?.harvestingSeason) tip.push(`Harvest: ${entry.harvestingSeason}`)
+        const hoverText = tip.join('<br>')
         for (let p = 0; p < x.length; p++) {
-          const lines = [`<b>${name}</b>`, `Spread: ${(r * 2).toFixed(1)} m`, `Height: ${height.toFixed(1)} m`]
-          if (entry?.plantingSeason)   lines.push(`Plant: ${entry.plantingSeason}`)
-          if (entry?.harvestingSeason) lines.push(`Harvest: ${entry.harvestingSeason}`)
-          if (entry?.count != null)    lines.push(`In field: ${entry.count}`)
-          lines.push(`X: ${x[p].toFixed(2)} m  Y: ${y[p].toFixed(2)} m`)
-          addCone(treeMesh, x[p], y[p], height, r, texts, lines.join('<br>'), 12)
+          addCone(treeMesh, x[p], y[p], height, r, texts, hoverText, CONE_SIDES)
         }
 
+        speciesTraces.push({ index: out.length, name, opacity: 0.9 })
         out.push({
           type: 'mesh3d', ...treeMesh,
           text: texts,
@@ -286,85 +362,107 @@ export function FieldCanvas3D({ hiddenSpecies, speciesList }: FieldCanvas3DProps
       }
     }
 
-    return out
-  }, [gardenLayout, field, hiddenSpecies])
+    // Fit the z-axis (in the rendered unit) to the tallest cone so garden plants
+    // aren't lost in a tall empty box; the field planner keeps 12 m headroom.
+    let maxH = 0
+    for (const s of bySpecies.values()) maxH = Math.max(maxH, s.height_m)
+    const zMax = isGarden ? Math.max(maxH * UNIT * 1.15, UNIT) : 12
 
+    return { traces: out, speciesTraces, relByName, hasRelations, zMax, unit }
+  }, [gardenLayout, field, hiddenSpecies, speciesList])
+
+  const { traces, zMax, unit } = useMemo(() => buildTraces(), [buildTraces])
+
+  // Plot once, then update IN PLACE on every traces change (≈ one per streaming
+  // poll). newPlot on first mount sets the camera; react() preserves the user's
+  // rotation/zoom/pan via the constant uirevision. No per-hover restyle — the
+  // native tooltip handles hover; a restyle on every mouse-move re-renders the
+  // whole mesh and crashed dense gardens, so it's removed.
+  const plottedRef = useRef(false)
   useEffect(() => {
     const el = plotRef.current
     if (!el || traces.length === 0) return
+    if (!plottedRef.current) {
+      Plotly.newPlot(el, traces, plotLayout(true, zMax, unit), PLOT_CONFIG)
+      plottedRef.current = true
+    } else {
+      Plotly.react(el, traces, plotLayout(false, zMax, unit), PLOT_CONFIG)
+    }
+  }, [traces, zMax, unit])
 
-    Plotly.newPlot(el, traces, {
-      autosize: true,
-      margin: { l: 0, r: 0, b: 0, t: 0 },
-      paper_bgcolor: '#0d0d0d',
-      scene: {
-        xaxis: { title: 'X (m)', showgrid: true, gridcolor: '#252525', zeroline: false, color: '#6b6358' },
-        yaxis: { title: 'Y (m)', showgrid: true, gridcolor: '#252525', zeroline: false, color: '#6b6358' },
-        zaxis: { title: 'Height (m)', showgrid: false, zeroline: false, color: '#6b6358', range: [-0.3, 12] },
-        aspectmode: 'data',
-        bgcolor: '#0d0d0d',
-        camera: { eye: { x: 1.5, y: -1.5, z: 0.9 } },
-      },
-      showlegend: false,
-    }, { displayModeBar: false, responsive: true })
-
-    return () => { Plotly.purge(el) }
-  }, [traces])
-
-  // Pinch-to-zoom on touch devices: scale the Plotly camera eye vector based on
-  // the change in distance between two fingers. Plotly's built-in 3D touch
-  // handles single-finger rotate but not pinch-zoom on the camera distance.
+  // Purge Plotly on unmount (we don't purge per update).
   useEffect(() => {
     const el = plotRef.current
-    if (!el || traces.length === 0) return
+    return () => { if (el) { try { Plotly.purge(el) } catch { /* already gone */ } } }
+  }, [])
 
-    const fallbackEye = { x: 1.5, y: -1.5, z: 0.9 }
-    const dist = (a: Touch, b: Touch) =>
-      Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY)
+  // Touch interaction (attached once): ONE finger rotates (Plotly's default 3D
+  // orbit — we don't preventDefault single-finger), TWO fingers pan (drag the
+  // scene under the fingers) AND pinch-zoom, by moving the camera eye/center.
+  useEffect(() => {
+    const el = plotRef.current
+    if (!el) return
+
+    const FALLBACK = { eye: { x: 1.5, y: -1.5, z: 0.9 }, center: { x: 0, y: 0, z: 0 }, up: { x: 0, y: 0, z: 1 } }
+    const dist = (a: Touch, b: Touch) => Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY)
+    const mid  = (a: Touch, b: Touch) => ({ x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2 })
 
     let active = false
     let startDist = 0
-    let startEye = fallbackEye
+    let startMid = { x: 0, y: 0 }
+    let startEye: V3 = FALLBACK.eye
+    let startCenter: V3 = FALLBACK.center
+    let up: V3 = FALLBACK.up
 
     const onStart = (e: TouchEvent) => {
-      if (e.touches.length !== 2) { active = false; return }
+      if (e.touches.length !== 2) { active = false; return }   // 1 finger → Plotly rotates
       e.preventDefault()
       active = true
       startDist = dist(e.touches[0], e.touches[1])
+      startMid  = mid(e.touches[0], e.touches[1])
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const cam = (el as any)._fullLayout?.scene?.camera?.eye
-      startEye = cam ? { x: cam.x, y: cam.y, z: cam.z } : fallbackEye
+      const cam = (el as any)._fullLayout?.scene?.camera
+      startEye    = cam?.eye    ? { ...cam.eye }    : { ...FALLBACK.eye }
+      startCenter = cam?.center ? { ...cam.center } : { ...FALLBACK.center }
+      up          = cam?.up     ? { ...cam.up }     : { ...FALLBACK.up }
     }
 
     const onMove = (e: TouchEvent) => {
       if (!active || e.touches.length !== 2) return
       e.preventDefault()
       const d = dist(e.touches[0], e.touches[1])
-      if (d === 0) return
-      const scale = Math.max(0.2, Math.min(5, startDist / d))
-      Plotly.relayout(el, {
-        'scene.camera.eye': {
-          x: startEye.x * scale,
-          y: startEye.y * scale,
-          z: startEye.z * scale,
-        },
-      })
-    }
+      const m = mid(e.touches[0], e.touches[1])
 
+      // Camera basis from the gesture-start orientation.
+      const fwd    = norm(sub(startCenter, startEye))
+      const right  = norm(cross(fwd, up))
+      const trueUp = norm(cross(right, fwd))
+      const eyeDist = vlen(sub(startEye, startCenter))
+      const rect = el.getBoundingClientRect()
+      const k = eyeDist / Math.max(rect.height, 1)   // world units per screen pixel
+
+      // Pan: move scene under the fingers (screen midpoint delta → world).
+      const pan = add(scaleV(right, -(m.x - startMid.x) * k), scaleV(trueUp, (m.y - startMid.y) * k))
+      // Zoom: scale eye toward/away from the (panned) center.
+      const scale = d > 0 ? Math.max(0.2, Math.min(5, startDist / d)) : 1
+      const newCenter = add(startCenter, pan)
+      const newEye = add(newCenter, scaleV(sub(startEye, startCenter), scale))
+
+      Plotly.relayout(el, { 'scene.camera.eye': newEye, 'scene.camera.center': newCenter })
+    }
     const onEnd = () => { active = false }
 
     el.addEventListener('touchstart',  onStart, { passive: false })
     el.addEventListener('touchmove',   onMove,  { passive: false })
     el.addEventListener('touchend',    onEnd)
     el.addEventListener('touchcancel', onEnd)
-
     return () => {
       el.removeEventListener('touchstart',  onStart)
       el.removeEventListener('touchmove',   onMove)
       el.removeEventListener('touchend',    onEnd)
       el.removeEventListener('touchcancel', onEnd)
     }
-  }, [traces])
+  }, [])
 
   if (!field) {
     return (

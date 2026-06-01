@@ -13,6 +13,7 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import { Layout } from './components/layout/Layout'
 import { HomePage } from './pages/HomePage'
 import { WizardPage } from './pages/WizardPage'
+import { GardenWizardPage } from './pages/GardenWizardPage'
 import { SummaryPage } from './pages/SummaryPage'
 import { AboutPage } from './pages/AboutPage'
 
@@ -23,6 +24,7 @@ export default function App() {
         <Routes>
           <Route path="/"        element={<HomePage />} />
           <Route path="/planner" element={<WizardPage />} />
+          <Route path="/garden"  element={<GardenWizardPage />} />
           <Route path="/summary" element={<SummaryPage />} />
           <Route path="/about"   element={<AboutPage />} />
         </Routes>

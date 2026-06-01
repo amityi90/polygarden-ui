@@ -1,7 +1,7 @@
 import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router-dom'
 import { useGardenStore } from '../store/gardenStore'
-import { getPdfUrl } from '../api/client'
+import { getPdfUrl, getGardenPdfUrl, streamGarden } from '../api/client'
 import { FieldCanvas } from '../components/summary/FieldCanvas'
 import { FieldCanvas3D } from '../components/summary/FieldCanvas3D'
 import { SpeciesLegend, type SpeciesEntry } from '../components/summary/SpeciesLegend'
@@ -13,7 +13,16 @@ const CANVAS_HEIGHT = 560
 export function SummaryPage() {
   const { t } = useTranslation()
   const navigate = useNavigate()
-  const { gardenLayout, reset, field, allPlants, selectedPlantIds, jobId } = useGardenStore()
+  const {
+    gardenLayout, reset, field, allPlants, selectedPlantIds, gardenSelectedPlantIds, jobId,
+    summaryMode, layoutStatus, layoutError,
+    setGardenLayout, setLayoutStatus, setLayoutError,
+  } = useGardenStore()
+  const isStreaming = layoutStatus === 'streaming'
+  const activeSelectedIds = summaryMode === 'garden' ? gardenSelectedPlantIds : selectedPlantIds
+  // 3D is disabled for the garden until it's fully built — while streaming the
+  // scene would be re-rendered every poll, which blocks interaction.
+  const threeDReady = summaryMode !== 'garden' || layoutStatus === 'done'
   const containerRef = useRef<HTMLDivElement>(null)
   const [canvasWidth, setCanvasWidth] = useState(800)
   const [view, setView] = useState<'2d' | '3d'>('2d')
@@ -30,7 +39,7 @@ export function SummaryPage() {
     //     (those are the ones the backend used to generate this layout)
     const byExact  = new Map(allPlants.map(p => [p.name, p]))
     const byLower  = new Map(allPlants.map(p => [p.name.toLowerCase(), p]))
-    const selected = allPlants.filter(p => selectedPlantIds.includes(p.id))
+    const selected = allPlants.filter(p => activeSelectedIds.includes(p.id))
 
     const lookupPlant = (name: string) => {
       const lower = name.toLowerCase()
@@ -86,7 +95,7 @@ export function SummaryPage() {
       }
     }
     return [...map.values()]
-  }, [gardenLayout, allPlants, selectedPlantIds])
+  }, [gardenLayout, allPlants, activeSelectedIds])
 
   const toggleSpecies = (name: string) => {
     setHiddenSpecies(prev => {
@@ -106,14 +115,44 @@ export function SummaryPage() {
     return () => observer.disconnect()
   }, [])
 
-  // Redirect back if no layout (e.g. user navigated directly to /summary)
+  // Garden flow: run the streaming poll HERE (not in the wizard) so navigating
+  // away from the wizard doesn't abort it. Each partial replaces the layout and
+  // the canvas re-renders, so the garden visibly grows. No-op for the field flow.
   useEffect(() => {
-    if (!gardenLayout) navigate('/planner', { replace: true })
-  }, [gardenLayout, navigate])
+    if (summaryMode !== 'garden' || layoutStatus !== 'streaming' || !jobId) return
+    const abort = new AbortController()
+    streamGarden(jobId, (partial) => setGardenLayout(partial), abort.signal)
+      .then(() => setLayoutStatus('done'))
+      .catch((e) => {
+        if ((e as DOMException)?.name === 'AbortError') return
+        setLayoutStatus('failed')
+        setLayoutError(e instanceof Error ? e.message : String(e))
+      })
+    return () => abort.abort()
+  }, [summaryMode, layoutStatus, jobId, setGardenLayout, setLayoutStatus, setLayoutError])
+
+  // Redirect back if there's no layout AND we're not mid-stream (e.g. user
+  // navigated directly to /summary). The garden seeds a bounds-only layout
+  // before navigating, so it never bounces.
+  useEffect(() => {
+    if (!gardenLayout && layoutStatus === 'idle') navigate('/planner', { replace: true })
+  }, [gardenLayout, layoutStatus, navigate])
+
+  // Keep the view on 2D while 3D is locked (garden not yet done).
+  useEffect(() => {
+    if (!threeDReady && view === '3d') setView('2d')
+  }, [threeDReady, view])
 
   const handleStartOver = () => {
-    reset()
-    navigate('/planner')
+    if (summaryMode === 'garden') {
+      // Don't clear state here — that would trip the redirect guard above and
+      // bounce to /planner. Navigate to /garden and let GardenWizardPage reset
+      // the garden form on arrival (signalled by `fresh`).
+      navigate('/garden', { state: { fresh: true } })
+    } else {
+      reset()
+      navigate('/planner')
+    }
   }
 
   const handleDownloadPdf = async () => {
@@ -131,7 +170,7 @@ export function SummaryPage() {
     const newTab = window.open('about:blank', '_blank')
 
     try {
-      const signedUrl = await getPdfUrl(jobId)
+      const signedUrl = await (summaryMode === 'garden' ? getGardenPdfUrl : getPdfUrl)(jobId)
 
       // Fetch the PDF bytes ourselves. The <a download> attribute is
       // *ignored* for cross-origin URLs, and our PDF lives on Supabase
@@ -183,25 +222,45 @@ export function SummaryPage() {
         </p>
       </div>
 
+      {/* Streaming / failure status (garden flow only) */}
+      {isStreaming && (
+        <div className="flex items-center gap-3 px-4 py-2.5 rounded-lg border border-[#c9a84c]/30 bg-[#c9a84c]/8">
+          <span className="w-2 h-2 rounded-full bg-[#c9a84c] animate-pulse" />
+          <span className="text-sm text-[#c9a84c]">{t('garden.building')}</span>
+        </div>
+      )}
+      {layoutStatus === 'failed' && (
+        <p className="text-red-400 text-sm bg-red-400/10 border border-red-400/20 rounded-lg px-4 py-3">
+          {layoutError ?? 'Failed to generate the garden.'}
+        </p>
+      )}
+
       {/* View toggle + Canvas */}
       <div className="flex flex-col gap-3">
         <div className="flex justify-end">
           <div className="flex items-center gap-1 p-1 rounded-lg border border-white/8 bg-[#111]">
-            {(['2d', '3d'] as const).map(v => (
-              <button
-                key={v}
-                type="button"
-                onClick={() => setView(v)}
-                className={[
-                  'px-4 py-1 rounded-md text-xs font-medium tracking-widest uppercase transition-all cursor-pointer',
-                  view === v
-                    ? 'bg-[#c9a84c] text-[#0a0a0a]'
-                    : 'text-[#9a9080] hover:text-[#f0ece3] bg-transparent',
-                ].join(' ')}
-              >
-                {v}
-              </button>
-            ))}
+            {(['2d', '3d'] as const).map(v => {
+              const locked = v === '3d' && !threeDReady
+              return (
+                <button
+                  key={v}
+                  type="button"
+                  onClick={() => !locked && setView(v)}
+                  disabled={locked}
+                  title={locked ? t('summary.threed_locked') : undefined}
+                  className={[
+                    'px-4 py-1 rounded-md text-xs font-medium tracking-widest uppercase transition-all',
+                    locked
+                      ? 'text-[#5a5248] cursor-not-allowed bg-transparent'
+                      : view === v
+                        ? 'bg-[#c9a84c] text-[#0a0a0a] cursor-pointer'
+                        : 'text-[#9a9080] hover:text-[#f0ece3] bg-transparent cursor-pointer',
+                  ].join(' ')}
+                >
+                  {v}
+                </button>
+              )
+            })}
           </div>
         </div>
 
@@ -215,9 +274,14 @@ export function SummaryPage() {
               canvasWidth={canvasWidth}
               canvasHeight={CANVAS_HEIGHT}
               hiddenSpecies={hiddenSpecies}
+              animateAppear={summaryMode === 'garden'}
             />
           ) : (
-            <FieldCanvas3D hiddenSpecies={hiddenSpecies} speciesList={speciesList} />
+            <FieldCanvas3D
+              hiddenSpecies={hiddenSpecies}
+              speciesList={speciesList}
+              animateAppear={summaryMode === 'garden'}
+            />
           )}
         </div>
 
@@ -235,10 +299,10 @@ export function SummaryPage() {
           <button
             type="button"
             onClick={handleDownloadPdf}
-            disabled={!gardenLayout}
+            disabled={!gardenLayout || isStreaming}
             className="px-8 py-3 bg-[#c9a84c] text-[#0a0a0a] font-medium text-sm tracking-wide rounded-lg hover:bg-[#e0c068] transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {t('summary.download_pdf')}
+            {isStreaming ? t('garden.building') : t('summary.download_pdf')}
           </button>
           <button
             type="button"

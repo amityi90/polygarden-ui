@@ -12,18 +12,21 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FeatureCollection, Polygon } from 'geojson'
 import { useTranslation } from 'react-i18next'
 import { speciesColor } from './speciesColor'
+import { useAppearSchedule, appearKey } from './useAppearSchedule'
 
 interface FieldCanvasProps {
   layout:        FeatureCollection
   canvasWidth:   number
   canvasHeight:  number
   hiddenSpecies?: ReadonlySet<string>
+  /** Garden streaming: pop newly-arrived plants in with a staggered animation. */
+  animateAppear?: boolean
 }
 
 // ─── Feature property types ───────────────────────────────────────────────────
 
 interface PlantRowProps     { type: 'plant_row';      row_index: number }
-interface PlantInstanceProps{ type: 'plant_instance'; plant_id?: number; plant_name: string; spread_m: number; radius_m: number }
+interface PlantInstanceProps{ type: 'plant_instance'; plant_id?: number; plant_name: string; spread_m: number; radius_m: number; companion_names?: string[]; antagonist_names?: string[] }
 interface TreeProps         { type: 'tree';           name: string; spread_m: number; height_m?: number }
 interface PVRowProps        { type: 'pv_row';         row_index: number; kw: number }
 interface GapProps          { type: 'gap' }
@@ -130,7 +133,7 @@ function tooltipLines(item: DrawItem, t: (k: string, o?: Record<string, unknown>
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export function FieldCanvas({ layout, canvasWidth, canvasHeight, hiddenSpecies }: FieldCanvasProps) {
+export function FieldCanvas({ layout, canvasWidth, canvasHeight, hiddenSpecies, animateAppear = false }: FieldCanvasProps) {
   const { t } = useTranslation()
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
@@ -349,6 +352,53 @@ export function FieldCanvas({ layout, canvasWidth, canvasHeight, hiddenSpecies }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [layout, canvasWidth, canvasHeight, scale, minX, minY, hiddenSpecies])
 
+  // ── Companion / antagonist relations (garden flow only) ────────────────────
+  // Embedded in each plant_instance feature by the garden backend. Empty for
+  // field layouts → the hover effect falls back to plain single-item highlight.
+  const { relations, hasRelations } = useMemo(() => {
+    const rel = new Map<string, { companions: Set<string>; antagonists: Set<string> }>()
+    let any = false
+    for (const f of layout.features) {
+      const p = f.properties as RawProps
+      if (p?.type !== 'plant_instance') continue
+      const pi = p as PlantInstanceProps
+      const companions  = new Set(pi.companion_names ?? [])
+      const antagonists = new Set(pi.antagonist_names ?? [])
+      if (companions.size || antagonists.size) any = true
+      rel.set(pi.plant_name, { companions, antagonists })
+    }
+    return { relations: rel, hasRelations: any }
+  }, [layout])
+
+  // Whether the layout has structural features — drives the bottom legend.
+  // Garden layouts (plant circles only) have none, so the legend is hidden there.
+  const hasStructure = useMemo(
+    () => layout.features.some(f => {
+      const tp = (f.properties as RawProps)?.type
+      return tp === 'plant_row' || tp === 'pv_row' || tp === 'gap'
+    }),
+    [layout],
+  )
+
+  const speciesNameOf = (props: RawProps): string | null =>
+    props.type === 'plant_instance' ? props.plant_name
+      : props.type === 'tree' ? props.name
+      : null
+
+  const circleKeyOf = (item: CircleItem): string =>
+    appearKey(speciesNameOf(item.props) ?? '', item.geoX, item.geoY)
+
+  // ── Staggered appear animation for streamed plants ─────────────────────────
+  // Ordered keys of plant/tree circles (grouped by species in the streamed
+  // GeoJSON); the scheduler diffs these to find each poll's new plants.
+  const circleKeys = useMemo(
+    () => items.filter((it): it is CircleItem => it.kind === 'circle').map(circleKeyOf),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [items],
+  )
+  const { schedule, scale: appearScale, alpha: appearAlpha, anyActive } = useAppearSchedule(animateAppear)
+  useEffect(() => { schedule(circleKeys) }, [circleKeys, schedule])
+
   // ── Draw ──────────────────────────────────────────────────────────────────
   useEffect(() => {
     const canvas = canvasRef.current
@@ -356,67 +406,104 @@ export function FieldCanvas({ layout, canvasWidth, canvasHeight, hiddenSpecies }
     const ctx = canvas.getContext('2d')
     if (!ctx) return
 
-    ctx.clearRect(0, 0, canvasWidth, canvasHeight)
-    ctx.fillStyle = '#0d0d0d'
-    ctx.fillRect(0, 0, canvasWidth, canvasHeight)
+    const paint = (now: number) => {
+      ctx.clearRect(0, 0, canvasWidth, canvasHeight)
+      ctx.fillStyle = '#0d0d0d'
+      ctx.fillRect(0, 0, canvasWidth, canvasHeight)
 
-    ctx.save()
-    ctx.translate(panX, panY)
-    ctx.scale(zoom, zoom)
+      ctx.save()
+      ctx.translate(panX, panY)
+      ctx.scale(zoom, zoom)
 
-    for (let i = 0; i < items.length; i++) {
-      const item    = items[i]
-      const hovered = i === hoveredIdx
+      // Garden hover effect: when hovering a plant, its companions shine and its
+      // antagonists blur/dim. Only active when companion data is embedded (garden).
+      const hovItem = hoveredIdx !== null ? items[hoveredIdx] : null
+      const hoveredSpecies = hovItem && hovItem.kind === 'circle' ? speciesNameOf(hovItem.props) : null
+      const tiered = hasRelations && !!hoveredSpecies
+      const rel = hoveredSpecies ? relations.get(hoveredSpecies) : undefined
 
-      if (item.kind === 'circle') {
-        const isPlant = item.props.type === 'plant_instance'
+      for (let i = 0; i < items.length; i++) {
+        const item    = items[i]
+        const hovered = i === hoveredIdx
 
-        if ((isPlant || item.props.type === 'tree') && !hovered) {
-          // All plants and trees: filled circle
+        if (item.kind === 'circle') {
+          const name = speciesNameOf(item.props)
+          let baseAlpha = 0.75
+          let fill  = item.baseColor
+          let glow  = 0
+
+          if (tiered && name) {
+            if (rel?.companions.has(name))       { baseAlpha = 1.0;  fill = item.hoverColor; glow = 14 }  // companions shine
+            else if (rel?.antagonists.has(name)) { baseAlpha = 0.12; fill = item.baseColor }              // antagonists dim
+            else                                 { baseAlpha = 0.75; fill = item.baseColor }              // hovered species + neutral: unchanged
+          } else if (hovered) {
+            baseAlpha = 0.9
+            fill  = item.hoverColor
+          }
+
+          // Appear animation: scale + fade newly-streamed plants in (staggered).
+          let r = item.r
+          let alpha = baseAlpha
+          if (animateAppear) {
+            const key = circleKeyOf(item)
+            const p = appearScale(key, now)
+            if (p <= 0) continue               // not yet appeared this frame
+            r = item.r * p
+            alpha = baseAlpha * appearAlpha(key, now)
+          }
+
           ctx.beginPath()
-          ctx.arc(item.cx, item.cy, item.r, 0, Math.PI * 2)
-          ctx.globalAlpha = 0.75
-          ctx.fillStyle   = item.baseColor
+          ctx.arc(item.cx, item.cy, r, 0, Math.PI * 2)
+          ctx.globalAlpha = alpha
+          ctx.fillStyle   = fill
+          if (glow) { ctx.shadowBlur = glow; ctx.shadowColor = fill }
+          else      { ctx.shadowBlur = 0;    ctx.shadowColor = 'transparent' }
           ctx.fill()
+          ctx.shadowBlur = 0
+
         } else {
-          // Hovered (plant or tree): filled circle highlight
+          ctx.globalAlpha = item.opacity
+          ctx.fillStyle   = hovered ? item.hoverColor : item.baseColor
           ctx.beginPath()
-          ctx.arc(item.cx, item.cy, item.r, 0, Math.PI * 2)
-          ctx.globalAlpha = 0.9
-          ctx.fillStyle   = item.hoverColor
+          ctx.roundRect(item.x, item.y, item.w, item.h, 2)
           ctx.fill()
-        }
 
-      } else {
-        ctx.globalAlpha = item.opacity
-        ctx.fillStyle   = hovered ? item.hoverColor : item.baseColor
-        ctx.beginPath()
-        ctx.roundRect(item.x, item.y, item.w, item.h, 2)
-        ctx.fill()
+          if (item.strokeColor) {
+            ctx.globalAlpha = 1
+            ctx.strokeStyle = item.strokeColor
+            ctx.lineWidth   = 1
+            ctx.stroke()
+          }
 
-        if (item.strokeColor) {
-          ctx.globalAlpha = 1
-          ctx.strokeStyle = item.strokeColor
-          ctx.lineWidth   = 1
-          ctx.stroke()
-        }
-
-        if (item.label) {
-          ctx.globalAlpha  = 1
-          ctx.fillStyle    = '#0a0a0a'
-          ctx.font         = '9px Inter, sans-serif'
-          ctx.textAlign    = 'left'
-          ctx.textBaseline = 'alphabetic'
-          ctx.fillText(item.label, item.x + 4, item.y + item.h / 2 + 4)
+          if (item.label) {
+            ctx.globalAlpha  = 1
+            ctx.fillStyle    = '#0a0a0a'
+            ctx.font         = '9px Inter, sans-serif'
+            ctx.textAlign    = 'left'
+            ctx.textBaseline = 'alphabetic'
+            ctx.fillText(item.label, item.x + 4, item.y + item.h / 2 + 4)
+          }
         }
       }
+
+      ctx.restore()
+      ctx.globalAlpha  = 1
+      ctx.shadowBlur   = 0
+      ctx.textAlign    = 'left'
+      ctx.textBaseline = 'alphabetic'
     }
 
-    ctx.restore()
-    ctx.globalAlpha  = 1
-    ctx.textAlign    = 'left'
-    ctx.textBaseline = 'alphabetic'
-  }, [items, hoveredIdx, canvasWidth, canvasHeight, zoom, panX, panY])
+    // Single static paint when idle; rAF loop while plants are popping in.
+    let rafId = 0
+    const loop = () => {
+      const now = performance.now()
+      paint(now)
+      if (animateAppear && anyActive(now)) rafId = requestAnimationFrame(loop)
+    }
+    loop()
+    return () => cancelAnimationFrame(rafId)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items, hoveredIdx, canvasWidth, canvasHeight, zoom, panX, panY, relations, hasRelations, animateAppear, appearScale, appearAlpha, anyActive])
 
   // ── Hit-test ──────────────────────────────────────────────────────────────
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -500,18 +587,20 @@ export function FieldCanvas({ layout, canvasWidth, canvasHeight, hiddenSpecies }
         </div>
       )}
 
-      <div className="mt-4 flex items-center gap-6 flex-wrap">
-        {([
-          ['plant_row', t('summary.legend.plant_row')],
-          ['pv_row',    t('summary.legend.pv_row')],
-          ['gap',       t('summary.legend.gap')],
-        ] as const).map(([key, label]) => (
-          <div key={key} className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded-sm" style={{ backgroundColor: STRUCT[key].base }} />
-            <span className="text-xs text-[#9a9080]">{label}</span>
-          </div>
-        ))}
-      </div>
+      {hasStructure && (
+        <div className="mt-4 flex items-center gap-6 flex-wrap">
+          {([
+            ['plant_row', t('summary.legend.plant_row')],
+            ['pv_row',    t('summary.legend.pv_row')],
+            ['gap',       t('summary.legend.gap')],
+          ] as const).map(([key, label]) => (
+            <div key={key} className="flex items-center gap-2">
+              <div className="w-3 h-3 rounded-sm" style={{ backgroundColor: STRUCT[key].base }} />
+              <span className="text-xs text-[#9a9080]">{label}</span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

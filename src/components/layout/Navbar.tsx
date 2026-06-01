@@ -46,6 +46,7 @@ export function Navbar() {
   const navLinks = [
     { label: t('nav.home'), to: '/' },
     { label: t('nav.planner'), to: '/planner' },
+    { label: t('nav.garden'), to: '/garden' },
     { label: t('nav.about'), to: '/about' },
   ]
 

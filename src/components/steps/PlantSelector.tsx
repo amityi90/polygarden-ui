@@ -20,13 +20,38 @@ function monthInRange(month: number, start: number, end: number): boolean {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export function PlantSelector() {
+interface PlantSelectorProps {
+  /** Back action. Defaults to the field flow's "go to step 1". */
+  onBack?: () => void
+  /** Next/primary action. Defaults to the field flow's "go to step 3". */
+  onNext?: () => void
+  /** Label for the primary button. Defaults to the field flow's "Next". */
+  nextLabel?: string
+  /** Whether the primary button shows a busy state. */
+  nextBusy?: boolean
+  /** Garden flow: hide trees from the catalog and the Type filter. */
+  hideTrees?: boolean
+  /** Override the selection source. Defaults to the field flow's selectedPlantIds. */
+  selectedIds?: number[]
+  /** Override the toggle handler. Defaults to the field flow's togglePlant. */
+  onToggle?: (id: number) => void
+}
+
+export function PlantSelector({ onBack, onNext, nextLabel, nextBusy, hideTrees, selectedIds, onToggle }: PlantSelectorProps = {}) {
   const { t } = useTranslation()
   const { allPlants, setAllPlants, selectedPlantIds, togglePlant, setStep } = useGardenStore()
+
+  const selIds = selectedIds ?? selectedPlantIds
+  const toggle = onToggle ?? togglePlant
+
+  const handleBack = onBack ?? (() => setStep(1))
+  const handleNext = onNext ?? (() => setStep(3))
+  const primaryLabel = nextLabel ?? t('wizard.next')
 
   const [search, setSearch] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [expandedId, setExpandedId] = useState<number | null>(null)   // selected chip showing its companions
 
   // Filters
   const [filterType,          setFilterType]          = useState<'all' | 'plant' | 'tree'>('all')
@@ -63,7 +88,8 @@ export function PlantSelector() {
   const available = useMemo(() => {
     const q = search.toLowerCase()
     return allPlants.filter(p => {
-      if (selectedPlantIds.includes(p.id)) return false
+      if (selIds.includes(p.id)) return false
+      if (hideTrees && p.isTree) return false
       if (q && !p.name.toLowerCase().includes(q)) return false
       if (filterType === 'plant' && p.isTree) return false
       if (filterType === 'tree'  && !p.isTree) return false
@@ -79,11 +105,11 @@ export function PlantSelector() {
       }
       return true
     })
-  }, [allPlants, search, selectedPlantIds, filterType, filterLight, filterHarvestMonths, filterPlantMonths])
+  }, [allPlants, search, selIds, filterType, filterLight, filterHarvestMonths, filterPlantMonths, hideTrees])
 
   const selected = useMemo(
-    () => allPlants.filter((p) => selectedPlantIds.includes(p.id)),
-    [allPlants, selectedPlantIds]
+    () => allPlants.filter((p) => selIds.includes(p.id)),
+    [allPlants, selIds]
   )
 
   return (
@@ -125,7 +151,8 @@ export function PlantSelector() {
 
             {/* Row 1: Type + Light */}
             <div className="flex items-center gap-4 flex-wrap">
-              {/* Type */}
+              {/* Type — hidden in the garden flow (plants only, no trees) */}
+              {!hideTrees && (
               <div className="flex items-center gap-2">
                 <span className="text-[10px] text-[#5a5248] uppercase tracking-widest w-9 shrink-0">Type</span>
                 <div className="flex items-center gap-0.5 p-0.5 rounded-md border border-white/8 bg-[#111]">
@@ -146,6 +173,7 @@ export function PlantSelector() {
                   ))}
                 </div>
               </div>
+              )}
 
               {/* Light */}
               <div className="flex items-center gap-2">
@@ -254,7 +282,7 @@ export function PlantSelector() {
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 overflow-y-auto pr-1" style={{ maxHeight: 340 }}>
               {available.map((plant) => (
-                <PlantCard key={plant.id} plant={plant} selected={false} onToggle={togglePlant} />
+                <PlantCard key={plant.id} plant={plant} selected={false} onToggle={toggle} />
               ))}
             </div>
           )}
@@ -280,7 +308,16 @@ export function PlantSelector() {
               </p>
             ) : (
               selected.map((plant) => (
-                <SelectedPlantChip key={plant.id} plant={plant} onRemove={togglePlant} />
+                <SelectedPlantChip
+                  key={plant.id}
+                  plant={plant}
+                  allPlants={allPlants}
+                  selectedIds={selIds}
+                  onToggle={toggle}
+                  hideTrees={hideTrees}
+                  expanded={expandedId === plant.id}
+                  onToggleExpand={() => setExpandedId((id) => (id === plant.id ? null : plant.id))}
+                />
               ))
             )}
           </div>
@@ -291,18 +328,18 @@ export function PlantSelector() {
       <div className="flex justify-between items-center pt-2">
         <button
           type="button"
-          onClick={() => setStep(1)}
+          onClick={handleBack}
           className="px-6 py-3 border border-white/10 text-[#9a9080] font-medium text-sm tracking-wide rounded-lg hover:border-white/20 hover:text-[#f0ece3] transition-all cursor-pointer bg-transparent"
         >
           {t('wizard.back')}
         </button>
         <button
           type="button"
-          onClick={() => setStep(3)}
-          disabled={selected.length === 0}
+          onClick={handleNext}
+          disabled={selected.length === 0 || nextBusy}
           className="px-8 py-3 bg-[#c9a84c] text-[#0a0a0a] font-semibold text-sm tracking-wide rounded-lg hover:bg-[#e0c068] disabled:opacity-30 disabled:cursor-not-allowed transition-all duration-200 shadow-[0_0_20px_rgba(201,168,76,0.2)] hover:shadow-[0_0_28px_rgba(201,168,76,0.35)] cursor-pointer"
         >
-          {t('wizard.next')}
+          {nextBusy ? '…' : primaryLabel}
         </button>
       </div>
     </div>
@@ -311,8 +348,26 @@ export function PlantSelector() {
 
 // ─── Selected plant chip (sidebar item) ───────────────────────────────────────
 
-function SelectedPlantChip({ plant, onRemove }: { plant: Plant; onRemove: (id: number) => void }) {
+interface SelectedPlantChipProps {
+  plant: Plant
+  allPlants: Plant[]
+  selectedIds: number[]
+  onToggle: (id: number) => void
+  hideTrees?: boolean
+  expanded: boolean
+  onToggleExpand: () => void
+}
+
+function SelectedPlantChip({
+  plant, allPlants, selectedIds, onToggle, hideTrees, expanded, onToggleExpand,
+}: SelectedPlantChipProps) {
   const { ref, rect, onMouseEnter, onMouseLeave } = useRadialHover<HTMLDivElement>()
+
+  // The plant's companions present in the catalog (trees hidden in the garden flow).
+  const companions = useMemo(() => {
+    const ids = new Set(plant.companionIds)
+    return allPlants.filter((p) => ids.has(p.id) && (!hideTrees || !p.isTree))
+  }, [plant, allPlants, hideTrees])
 
   return (
     <>
@@ -322,32 +377,76 @@ function SelectedPlantChip({ plant, onRemove }: { plant: Plant; onRemove: (id: n
         onMouseLeave={onMouseLeave}
         className="flex flex-col gap-2 p-3 rounded-xl bg-[#111111] border border-[#c9a84c]/25 hover:border-[#c9a84c]/50 transition-all"
       >
-        <div className="flex items-start justify-between gap-1">
-          <span className="text-base leading-none">🌿</span>
-          <button
-            type="button"
-            onClick={() => onRemove(plant.id)}
-            className="text-[#5a5248] hover:text-[#f0ece3] transition-colors cursor-pointer bg-transparent border-none p-0 leading-none"
-            aria-label={`Remove ${plant.name}`}
-          >
-            <svg width="10" height="10" viewBox="0 0 12 12" fill="none">
-              <path d="M2 2l8 8M10 2l-8 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-            </svg>
-          </button>
+        {/* Click the body to reveal companions */}
+        <div
+          role="button"
+          tabIndex={0}
+          onClick={onToggleExpand}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onToggleExpand() }}
+          className="flex flex-col gap-2 cursor-pointer"
+          aria-expanded={expanded}
+        >
+          <div className="flex items-start justify-between gap-1">
+            <span className="text-base leading-none">🌿</span>
+            <span
+              role="button"
+              tabIndex={0}
+              onClick={(e) => { e.stopPropagation(); onToggle(plant.id) }}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); onToggle(plant.id) } }}
+              className="text-[#5a5248] hover:text-[#f0ece3] transition-colors cursor-pointer leading-none"
+              aria-label={`Remove ${plant.name}`}
+            >
+              <svg width="10" height="10" viewBox="0 0 12 12" fill="none">
+                <path d="M2 2l8 8M10 2l-8 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+              </svg>
+            </span>
+          </div>
+
+          <p className="font-['Cormorant_Garant'] text-sm font-semibold text-[#f0ece3] leading-tight">
+            {plant.name}
+          </p>
+
+          <div className="flex items-center gap-2 text-[#9a9080]">
+            <span className="flex items-center gap-1 text-[10px]">
+              <DropletIcon size={10} /> {plant.waterLabel}
+            </span>
+            <span className="flex items-center gap-1 text-[10px]">
+              <HeightIcon size={10} /> {plant.heightLabel}
+            </span>
+          </div>
         </div>
 
-        <p className="font-['Cormorant_Garant'] text-sm font-semibold text-[#f0ece3] leading-tight">
-          {plant.name}
-        </p>
-
-        <div className="flex items-center gap-2 text-[#9a9080]">
-          <span className="flex items-center gap-1 text-[10px]">
-            <DropletIcon size={10} /> {plant.waterLabel}
-          </span>
-          <span className="flex items-center gap-1 text-[10px]">
-            <HeightIcon size={10} /> {plant.heightLabel}
-          </span>
-        </div>
+        {/* Companion picker */}
+        {expanded && (
+          <div className="flex flex-col gap-1.5 pt-2 mt-1 border-t border-white/8">
+            <span className="text-[9px] uppercase tracking-widest text-[#5a5248]">Companions</span>
+            {companions.length === 0 ? (
+              <span className="text-[10px] text-[#5a5248]">No companions</span>
+            ) : (
+              <div className="flex flex-wrap gap-1">
+                {companions.map((c) => {
+                  const isSel = selectedIds.includes(c.id)
+                  return (
+                    <button
+                      key={c.id}
+                      type="button"
+                      onClick={() => onToggle(c.id)}
+                      className={[
+                        'px-1.5 py-0.5 rounded text-[10px] font-medium border transition-all cursor-pointer',
+                        isSel
+                          ? 'bg-[#c9a84c]/20 border-[#c9a84c]/60 text-[#c9a84c]'
+                          : 'bg-transparent border-white/10 text-[#9a9080] hover:text-[#f0ece3] hover:border-white/25',
+                      ].join(' ')}
+                      title={isSel ? `Remove ${c.name}` : `Add ${c.name}`}
+                    >
+                      {isSel ? '✓ ' : '+ '}{c.name}
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {rect && <RadialRing bubbles={buildBubbles(plant)} rect={rect} radius={100} />}

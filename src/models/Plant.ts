@@ -33,6 +33,7 @@ export interface RawPlant {
   spread: number            // cm
   body_water: boolean       // true = tolerates water on leaves
   is_tree: boolean
+  companion_plants?: { id: number; name: string }[]   // nested companions from /all_plants
 }
 
 export class Plant {
@@ -48,6 +49,7 @@ export class Plant {
   readonly spread: number
   readonly bodyWater: boolean
   readonly isTree: boolean
+  readonly companionIds: number[]
 
   constructor(raw: RawPlant) {
     this.id = raw.id
@@ -62,6 +64,7 @@ export class Plant {
     this.spread = raw.spread
     this.bodyWater = raw.body_water
     this.isTree = raw.is_tree
+    this.companionIds = raw.companion_plants?.map((c) => c.id) ?? []
   }
 
   // ─── Formatted display getters ──────────────────────────────────────────────

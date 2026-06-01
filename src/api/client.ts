@@ -14,6 +14,7 @@ import type {
   GardenLayout,
   CalculateMinMaxPVRequest,
   MakeGardenRequest,
+  MakeGardenLayoutRequest,
 } from '../types'
 import { Plant, type RawPlant } from '../models/Plant'
 
@@ -78,6 +79,82 @@ export async function makeAgrivoltaicGarden(
 // GET /job_pdf_url/<jobId> — returns a Supabase Storage signed URL (30-min TTL).
 export async function getPdfUrl(jobId: string): Promise<string> {
   const { url } = await request<{ url: string }>(`/job_pdf_url/${jobId}`)
+  return url
+}
+
+// ─── Garden Planner ────────────────────────────────────────────────────────
+// The garden job streams: POST /generate_garden_layout returns 202 + { job_id }
+// and GET /garden_job_status/<id> returns the geometry packed SO FAR (partial)
+// on every poll while status="running", then the final result on "done". The
+// caller renders each partial as it arrives, so the garden appears to grow live.
+const GARDEN_POLL_INTERVAL_MS = 250
+
+type GardenStatusResponse =
+  | { status: 'queued' | 'running'; result: GardenLayout | null }
+  | { status: 'done'; result: GardenLayout }
+  | { status: 'failed'; error: string }
+
+// POST /generate_garden_layout — kicks off the async job, returns its id.
+export async function startGarden(
+  body: MakeGardenLayoutRequest,
+  signal?: AbortSignal,
+): Promise<string> {
+  const { job_id } = await request<{ job_id: string }>('/generate_garden_layout', {
+    method: 'POST',
+    body: JSON.stringify(body),
+    signal,
+  })
+  return job_id
+}
+
+// Poll the garden job, invoking onTick with each partial layout. Resolves with
+// the final layout on "done", rejects on "failed"/abort/lost connection.
+export function streamGarden(
+  jobId: string,
+  onTick: (partial: GardenLayout) => void,
+  signal?: AbortSignal,
+): Promise<GardenLayout> {
+  return new Promise((resolve, reject) => {
+    let consecutiveErrors = 0
+    const intervalId = setInterval(async () => {
+      if (signal?.aborted) {
+        clearInterval(intervalId)
+        reject(new DOMException('Aborted', 'AbortError'))
+        return
+      }
+      try {
+        const res = await fetch(`${BASE_URL}/garden_job_status/${jobId}`, { signal })
+        const data = (await res.json()) as GardenStatusResponse
+        consecutiveErrors = 0
+        if (data.status === 'failed') {
+          clearInterval(intervalId)
+          reject(new Error(data.error))
+          return
+        }
+        if (data.result) onTick(data.result)          // partial OR final
+        if (data.status === 'done') {
+          clearInterval(intervalId)
+          resolve(data.result)
+        }
+      } catch (err) {
+        if ((err as DOMException)?.name === 'AbortError') {
+          clearInterval(intervalId)
+          reject(err)
+          return
+        }
+        consecutiveErrors += 1
+        if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+          clearInterval(intervalId)
+          reject(new Error('lost_connection'))
+        }
+      }
+    }, GARDEN_POLL_INTERVAL_MS)
+  })
+}
+
+// GET /garden_pdf_url/<jobId> — Supabase Storage signed URL for the garden PDF.
+export async function getGardenPdfUrl(jobId: string): Promise<string> {
+  const { url } = await request<{ url: string }>(`/garden_pdf_url/${jobId}`)
   return url
 }
 

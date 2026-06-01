@@ -2,7 +2,30 @@
   "nav": {
     "home": "Home",
     "planner": "Field Planner",
+    "garden": "Garden Planner",
     "about": "About"
+  },
+  "home": {
+    "field": { "tagline": "Solar panels + crops on shared land" },
+    "garden": { "tagline": "Companion planting in a small plot" }
+  },
+  "garden": {
+    "generate": "Generate Garden",
+    "building": "Growing your garden…",
+    "steps": {
+      "1": "Garden Size",
+      "2": "Plants"
+    },
+    "step1": {
+      "title": "Define Your Garden",
+      "subtitle": "Enter the size of your garden bed in meters (up to 20 × 20).",
+      "length": "Length",
+      "width": "Width",
+      "length_placeholder": "e.g. 10",
+      "width_placeholder": "e.g. 8",
+      "unit": "m",
+      "hint": "Plants are packed as circles by their mature spread — companions cluster together, antagonists are kept apart."
+    }
   },
   "footer": {
     "tagline": "Grow smarter. Harvest sunlight.",
@@ -12,7 +35,7 @@
     "step": "Step {{current}} of {{total}}",
     "next": "Next",
     "back": "Back",
-    "submit": "Generate My Garden",
+    "submit": "Generate My Field",
     "steps": {
       "1": "Field Size",
       "2": "Plants",
@@ -92,6 +115,7 @@
     },
     "download_pdf": "Download PDF",
     "pdf_loading": "Generating PDF…",
-    "start_over": "Plan Another Garden"
+    "start_over": "Plan Another Garden",
+    "threed_locked": "3D view is available once the garden is ready"
   }
 }
