@@ -50,11 +50,11 @@ export function calculateMinMaxPV(body: CalculateMinMaxPVRequest): Promise<PVRan
 
 // POST /generate_field_layout
 // The endpoint is async: POST returns 202 + { job_id }; the result is fetched
-// by polling GET /job_status/<job_id> every 2s until status="done" or "failed".
+// by polling GET /job_status/<job_id> every 30s until status="done" or "failed".
 // The done-result no longer contains a PDF — instead the result has a
 // `pdf_path` referencing Supabase Storage. Downloads use getPdfUrl() (below)
 // to mint a short-lived signed URL on demand.
-const POLL_INTERVAL_MS = 2000
+const POLL_INTERVAL_MS = 30000
 const MAX_CONSECUTIVE_ERRORS = 5
 
 type JobStatusResponse =
