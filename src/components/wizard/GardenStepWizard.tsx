@@ -42,7 +42,7 @@ export function GardenStepWizard() {
   const navigate = useNavigate()
   const {
     gardenStep, gardenField, gardenSelectedPlantIds, toggleGardenPlant, setGardenStep,
-    setField, setJobId, setSummaryMode, setLayoutStatus, setLayoutError, setGardenLayout,
+    setField, setJobId, setSummaryMode, setLayoutStatus, setLayoutError, setGardenLayout, setSavedView,
   } = useGardenStore()
 
   const [starting, setStarting] = useState(false)
@@ -66,6 +66,7 @@ export function GardenStepWizard() {
       setJobId(jobId)
       setSummaryMode('garden')
       setLayoutError(null)
+      setSavedView(false)
       setLayoutStatus('streaming')
       setGardenLayout(emptyGarden(gardenField.length, gardenField.width))
       navigate('/summary')

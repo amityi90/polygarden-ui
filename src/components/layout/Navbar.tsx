@@ -9,10 +9,14 @@
 import { useTranslation } from 'react-i18next'
 import { Link, useLocation } from 'react-router-dom'
 import { useEffect, useRef, useState } from 'react'
+import { useAuthStore } from '../../store/authStore'
+import { usePopupStore, notify } from '../../store/popupStore'
 
 export function Navbar() {
   const { t, i18n } = useTranslation()
   const location = useLocation()
+  const { user, isAuthed, logout } = useAuthStore()
+  const { openPopup } = usePopupStore()
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
 
@@ -47,8 +51,11 @@ export function Navbar() {
     { label: t('nav.home'), to: '/' },
     { label: t('nav.planner'), to: '/planner' },
     { label: t('nav.garden'), to: '/garden' },
+    ...(isAuthed() ? [{ label: 'Dashboard', to: '/dashboard' }] : []),
     { label: t('nav.about'), to: '/about' },
   ]
+
+  const doLogout = () => { logout(); notify('info', 'Logged out') }
 
   return (
     <nav className="w-full border-b border-white/8 bg-[#0a0a0a]/90 backdrop-blur-md sticky top-0 z-50">
@@ -93,14 +100,34 @@ export function Navbar() {
           ))}
         </div>
 
-        {/* Language switcher */}
-        <button
-          onClick={toggleLanguage}
-          className="flex items-center gap-2 px-3 py-1.5 rounded-md border border-white/10 text-[#9a9080] hover:text-[#c9a84c] hover:border-[#c9a84c]/40 transition-all text-sm font-medium tracking-widest cursor-pointer bg-transparent"
-          aria-label="Switch language"
-        >
-          {i18n.language.startsWith('de') ? 'EN' : 'DE'}
-        </button>
+        {/* Auth + language */}
+        <div className="flex items-center gap-3">
+          {isAuthed() ? (
+            <>
+              <span className="hidden sm:inline text-xs text-[#9a9080] max-w-[10rem] truncate">{user?.email}</span>
+              <button
+                onClick={doLogout}
+                className="px-3 py-1.5 rounded-md border border-white/10 text-[#9a9080] hover:text-[#c9a84c] hover:border-[#c9a84c]/40 transition-all text-sm font-medium cursor-pointer bg-transparent"
+              >
+                Logout
+              </button>
+            </>
+          ) : (
+            <button
+              onClick={() => openPopup({ kind: 'login' })}
+              className="px-3 py-1.5 rounded-md border border-[#c9a84c]/40 text-[#c9a84c] hover:bg-[#c9a84c]/10 transition-all text-sm font-medium cursor-pointer bg-transparent"
+            >
+              Login
+            </button>
+          )}
+          <button
+            onClick={toggleLanguage}
+            className="flex items-center gap-2 px-3 py-1.5 rounded-md border border-white/10 text-[#9a9080] hover:text-[#c9a84c] hover:border-[#c9a84c]/40 transition-all text-sm font-medium tracking-widest cursor-pointer bg-transparent"
+            aria-label="Switch language"
+          >
+            {i18n.language.startsWith('de') ? 'EN' : 'DE'}
+          </button>
+        </div>
       </div>
 
       {/* Mobile slide menu */}

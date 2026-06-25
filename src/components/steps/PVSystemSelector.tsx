@@ -39,7 +39,7 @@ type FormValues = {
 export function PVSystemSelector() {
   const { t } = useTranslation()
   const navigate = useNavigate()
-  const { pvRange, pvSystem, field, selectedPlantIds, setPVSystem, setGardenLayout, setJobId, setStep } = useGardenStore()
+  const { pvRange, pvSystem, field, selectedPlantIds, setPVSystem, setGardenLayout, setJobId, setStep, setSavedView } = useGardenStore()
   const [apiError, setApiError] = useState<string | null>(null)
   const abortRef = useRef<AbortController | null>(null)
   useEffect(() => () => abortRef.current?.abort(), [])
@@ -91,6 +91,7 @@ export function PVSystemSelector() {
       const { layout, jobId } = await makeAgrivoltaicGarden(body, abortRef.current.signal)
       setGardenLayout(layout)
       setJobId(jobId)
+      setSavedView(false)
       navigate('/summary')
     } catch (err) {
       if ((err as DOMException)?.name === 'AbortError') return

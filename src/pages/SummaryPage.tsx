@@ -1,7 +1,9 @@
 import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router-dom'
 import { useGardenStore } from '../store/gardenStore'
-import { getPdfUrl, getGardenPdfUrl, streamGarden } from '../api/client'
+import { getPdfUrl, getGardenPdfUrl, streamGarden, saveGardenToAccount } from '../api/client'
+import { useAuthStore } from '../store/authStore'
+import { usePopupStore, notify } from '../store/popupStore'
 import { FieldCanvas } from '../components/summary/FieldCanvas'
 import { FieldCanvas3D } from '../components/summary/FieldCanvas3D'
 import { SpeciesLegend, type SpeciesEntry } from '../components/summary/SpeciesLegend'
@@ -15,7 +17,7 @@ export function SummaryPage() {
   const navigate = useNavigate()
   const {
     gardenLayout, reset, field, allPlants, selectedPlantIds, gardenSelectedPlantIds, jobId,
-    summaryMode, layoutStatus, layoutError,
+    summaryMode, layoutStatus, layoutError, savedView,
     setGardenLayout, setLayoutStatus, setLayoutError,
   } = useGardenStore()
   const isStreaming = layoutStatus === 'streaming'
@@ -143,6 +145,33 @@ export function SummaryPage() {
     if (!threeDReady && view === '3d') setView('2d')
   }, [threeDReady, view])
 
+  const { isAuthed } = useAuthStore()
+  const openPopup = usePopupStore((s) => s.openPopup)
+  const [saving, setSaving] = useState(false)
+
+  const handleSave = () => {
+    if (!isAuthed()) { openPopup({ kind: 'login' }); return }
+    if (!jobId) return
+    openPopup({
+      kind: 'prompt',
+      title: 'Save layout',
+      label: 'Name',
+      defaultValue: summaryMode === 'garden' ? 'My Garden' : 'My Field',
+      submitLabel: 'Save',
+      onSubmit: async (name) => {
+        setSaving(true)
+        try {
+          await saveGardenToAccount(name, jobId, summaryMode === 'garden' ? 'garden' : 'field')
+          notify('success', 'Saved to your account')
+        } catch (e) {
+          notify('error', (e as Error).message.replace(/^API error \d+: /, '') || 'Save failed')
+        } finally {
+          setSaving(false)
+        }
+      },
+    })
+  }
+
   const handleStartOver = () => {
     if (summaryMode === 'garden') {
       // Don't clear state here — that would trip the redirect guard above and
@@ -172,33 +201,12 @@ export function SummaryPage() {
     try {
       const signedUrl = await (summaryMode === 'garden' ? getGardenPdfUrl : getPdfUrl)(jobId)
 
-      // Fetch the PDF bytes ourselves. The <a download> attribute is
-      // *ignored* for cross-origin URLs, and our PDF lives on Supabase
-      // Storage (a different origin). To force a download we have to
-      // wrap the bytes as a Blob and mint a same-origin blob URL via
-      // URL.createObjectURL — the download attribute honours that, and
-      // the new tab can navigate to it too.
-      const response = await fetch(signedUrl)
-      if (!response.ok) throw new Error(`HTTP ${response.status}`)
-      const blob = await response.blob()
-      const blobUrl = URL.createObjectURL(blob)
-
-      // (a) Save to disk
-      const a = document.createElement('a')
-      a.href = blobUrl
-      a.download = 'garden_layout.pdf'
-      a.style.display = 'none'
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
-
-      // (b) Show in the placeholder tab we opened pre-await
-      if (newTab) newTab.location.href = blobUrl
-
-      // Blob URLs hold their bytes in memory until revoked. Give both
-      // the save dialog and the new tab plenty of time to read the URL
-      // before releasing it.
-      setTimeout(() => URL.revokeObjectURL(blobUrl), 120_000)
+      // The PDF lives on R2 (a different origin) which sends no CORS headers, so
+      // we can't fetch the bytes from JS. Instead, point the tab straight at the
+      // presigned URL — the backend stamps it with Content-Disposition:
+      // attachment, so the browser downloads it (navigation needs no CORS).
+      if (newTab) newTab.location.href = signedUrl
+      else window.open(signedUrl, '_blank')
     } catch (e) {
       if (newTab) newTab.close()
       setPdfError(`Failed to download PDF: ${e instanceof Error ? e.message : String(e)}`)
@@ -296,14 +304,26 @@ export function SummaryPage() {
       {/* Actions */}
       <div className="flex flex-col items-center gap-3">
         <div className="flex justify-center gap-4">
-          <button
-            type="button"
-            onClick={handleDownloadPdf}
-            disabled={!gardenLayout || isStreaming}
-            className="px-8 py-3 bg-[#c9a84c] text-[#0a0a0a] font-medium text-sm tracking-wide rounded-lg hover:bg-[#e0c068] transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {isStreaming ? t('garden.building') : t('summary.download_pdf')}
-          </button>
+          {!savedView && (
+            <>
+              <button
+                type="button"
+                onClick={handleDownloadPdf}
+                disabled={!gardenLayout || isStreaming}
+                className="px-8 py-3 bg-[#c9a84c] text-[#0a0a0a] font-medium text-sm tracking-wide rounded-lg hover:bg-[#e0c068] transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isStreaming ? t('garden.building') : t('summary.download_pdf')}
+              </button>
+              <button
+                type="button"
+                onClick={handleSave}
+                disabled={!gardenLayout || isStreaming || saving}
+                className="px-8 py-3 bg-emerald-600 text-white font-medium text-sm tracking-wide rounded-lg hover:bg-emerald-500 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {saving ? 'Saving…' : 'Save to my account'}
+              </button>
+            </>
+          )}
           <button
             type="button"
             onClick={handleStartOver}

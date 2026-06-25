@@ -116,6 +116,9 @@ interface GardenStore {
   setLayoutStatus: (s: 'idle' | 'streaming' | 'done' | 'failed') => void
   layoutError: string | null
   setLayoutError: (e: string | null) => void
+  // True while viewing a *saved* layout (read-only): hides Save / Download PDF.
+  savedView: boolean
+  setSavedView: (v: boolean) => void
 
   // ── Garden form (persisted, isolated from the field flow's field/selection) ──
   gardenField: FieldDimensions | null
@@ -143,6 +146,7 @@ const initialState = {
   summaryMode: 'field' as 'field' | 'garden',
   layoutStatus: 'idle' as 'idle' | 'streaming' | 'done' | 'failed',
   layoutError: null as string | null,
+  savedView: false,
   gardenField: null,
   gardenSelectedPlantIds: [],
   gardenStep: 1 as 1 | 2,
@@ -180,6 +184,8 @@ export const useGardenStore = create<GardenStore>()(
 
       setLayoutError: (layoutError) => set({ layoutError }),
 
+      setSavedView: (savedView) => set({ savedView }),
+
       setGardenField: (gardenField) => set({ gardenField }),
 
       toggleGardenPlant: (id) =>
@@ -201,6 +207,7 @@ export const useGardenStore = create<GardenStore>()(
           summaryMode: 'field',
           layoutStatus: 'idle',
           layoutError: null,
+          savedView: false,
         }),
 
       reset: () => set(initialState),

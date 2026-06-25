@@ -16,6 +16,10 @@ import { WizardPage } from './pages/WizardPage'
 import { GardenWizardPage } from './pages/GardenWizardPage'
 import { SummaryPage } from './pages/SummaryPage'
 import { AboutPage } from './pages/AboutPage'
+import { DashboardPage } from './pages/DashboardPage'
+import { GardenDocsPage } from './pages/GardenDocsPage'
+import { SavedLayoutPage } from './pages/SavedLayoutPage'
+import { RequireAuth } from './components/auth/RequireAuth'
 
 export default function App() {
   return (
@@ -27,6 +31,9 @@ export default function App() {
           <Route path="/garden"  element={<GardenWizardPage />} />
           <Route path="/summary" element={<SummaryPage />} />
           <Route path="/about"   element={<AboutPage />} />
+          <Route path="/dashboard"            element={<RequireAuth><DashboardPage /></RequireAuth>} />
+          <Route path="/dashboard/:id/view"   element={<RequireAuth><SavedLayoutPage /></RequireAuth>} />
+          <Route path="/dashboard/:id/docs"   element={<RequireAuth><GardenDocsPage /></RequireAuth>} />
         </Routes>
       </Layout>
     </BrowserRouter>

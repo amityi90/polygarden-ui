@@ -17,13 +17,19 @@ import type {
   MakeGardenLayoutRequest,
 } from '../types'
 import { Plant, type RawPlant } from '../models/Plant'
+import { getToken } from './token'
 
 const BASE_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:5000'
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  const token = getToken()
   const res = await fetch(`${BASE_URL}${path}`, {
-    headers: { 'Content-Type': 'application/json' },
     ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(options?.headers ?? {}),
+    },
   })
 
   if (!res.ok) {
@@ -32,6 +38,82 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   }
 
   return res.json() as Promise<T>
+}
+
+// ─── Auth ────────────────────────────────────────────────────────────────────
+export interface AuthUser { id: number; email: string }
+export interface AuthResponse { token: string; user: AuthUser }
+
+export function apiRegister(email: string, password: string): Promise<AuthResponse> {
+  return request<AuthResponse>('/auth/register', { method: 'POST', body: JSON.stringify({ email, password }) })
+}
+export function apiLogin(email: string, password: string): Promise<AuthResponse> {
+  return request<AuthResponse>('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) })
+}
+
+// ─── Gardens (saved layouts) ─────────────────────────────────────────────────
+export interface SavedGarden {
+  id: string; serial_no: number; name: string; mode: 'field' | 'garden'
+  field_length: number; field_width: number; created_at: string | null
+}
+export interface PlantedPlant {
+  serial: string; name: string; plant_id: number; x: number; y: number
+  stage: string | null; health_status: string
+}
+
+export function saveGardenToAccount(name: string, jobId: string, mode: 'field' | 'garden') {
+  return request<{ id: string; serial_no: number; planted_count: number; summary_only: boolean }>(
+    '/gardens', { method: 'POST', body: JSON.stringify({ name, job_id: jobId, mode }) },
+  )
+}
+export function listGardens(): Promise<SavedGarden[]> {
+  return request<SavedGarden[]>('/gardens')
+}
+export function getGarden(id: string) {
+  return request<SavedGarden & { layout_url: string | null }>(`/gardens/${id}`)
+}
+export function getGardenLayout(id: string): Promise<GardenLayout> {
+  return request<GardenLayout>(`/gardens/${id}/layout`)
+}
+export function getSavedPdfUrl(id: string): Promise<string> {
+  return request<{ url: string }>(`/gardens/${id}/pdf_url`).then((r) => r.url)
+}
+export function getGardenPlants(id: string) {
+  return request<{ summary_only: boolean; plants: PlantedPlant[] }>(`/gardens/${id}/plants`)
+}
+export function renameGarden(id: string, name: string) {
+  return request<{ id: string; name: string }>(`/gardens/${id}`, { method: 'PATCH', body: JSON.stringify({ name }) })
+}
+export function deleteGarden(id: string) {
+  return request<{ deleted: boolean }>(`/gardens/${id}`, { method: 'DELETE' })
+}
+
+// ─── Garden docs (photos) ────────────────────────────────────────────────────
+export interface PhotoGroup { date: string; photos: { id: string; url: string; caption: string | null }[] }
+
+export async function uploadGardenPhoto(gardenId: string, file: File, takenOn?: string) {
+  const fd = new FormData()
+  fd.append('file', file)
+  if (takenOn) fd.append('taken_on', takenOn)
+  const token = getToken()
+  const res = await fetch(`${BASE_URL}/gardens/${gardenId}/photos`, {
+    method: 'POST',
+    headers: token ? { Authorization: `Bearer ${token}` } : {},   // no Content-Type → browser sets multipart boundary
+    body: fd,
+  })
+  if (!res.ok) throw new Error(`API error ${res.status}: ${await res.text()}`)
+  return res.json() as Promise<{ id: string; taken_on: string; url: string }>
+}
+export function listGardenPhotos(gardenId: string) {
+  return request<{ dates: string[]; groups: PhotoGroup[] }>(`/gardens/${gardenId}/photos`)
+}
+export function updatePhotoDate(gardenId: string, photoId: string, takenOn: string) {
+  return request<{ id: string; taken_on: string }>(
+    `/gardens/${gardenId}/photos/${photoId}`, { method: 'PATCH', body: JSON.stringify({ taken_on: takenOn }) },
+  )
+}
+export function deleteGardenPhoto(gardenId: string, photoId: string) {
+  return request<{ deleted: boolean }>(`/gardens/${gardenId}/photos/${photoId}`, { method: 'DELETE' })
 }
 
 // GET /all_plants
